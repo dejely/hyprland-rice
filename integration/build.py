@@ -60,6 +60,45 @@ def build(destination):
         script = re.search(r'\$SCRIPT_DIR/([^"\s]+\.py)', original)
         if script:
             wrapper.write_text('#!/usr/bin/env bash\nset -euo pipefail\nSCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec python3 "$SCRIPT_DIR/' + script[1] + '" "$@"\n')
+    # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
+    import re
+    for path in destination.rglob('*.qml'):
+        text = path.read_text()
+        text = re.sub(r'hl\.dsp\.focus\(\{\s*workspace = (\$\{[^}]+\}) \}\)', r'workspace \1', text)
+        text = re.sub(r'hl\.dsp\.focus\(\{ window = "address:(\$\{[^}]+\})" \}\)', r'focuswindow address:\1', text)
+        text = re.sub(r'hl\.dsp\.window\.close\(\{ window = "address:(\$\{[^}]+\})" \}\)', r'closewindow address:\1', text)
+        text = re.sub(r'hl\.dsp\.window\.move\(\{ workspace = (\$\{[^}]+\}), follow = false, window = "address:(\$\{[^}]+\})" \}\)', r'movetoworkspacesilent \1,address:\2', text)
+        text = re.sub(r'hl\.dsp\.window\.swap\(\{ window = "address:(\$\{[^}]+\})" \}\)', r'swapwindow address:\1', text)
+        text = text.replace('hl.dsp.global("quickshell:wallpaperSelectorToggle")', 'global quickshell:wallpaperSelectorToggle')
+        # Isolated smoke runs must never place panels on the physical screen.
+        text = text.replace('model: Quickshell.screens', 'model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))')
+        path.write_text(text)
+    replace('services/HyprlandBackend.qml', 'hl.dsp.focus({workspace = "r${direction === "next" ? "+1" : "-1"}"})', 'workspace r${direction === "next" ? "+1" : "-1"}')
+    replace('modules/common/functions/Session.qml', 'Quickshell.execDetached(["loginctl", "lock-session"]);', 'Quickshell.execDetached(["hyprlock"]);')
+    replace('modules/common/widgets/WidgetCard.qml', 'radius: Appearance.rounding?.verylarge ?? 30', 'radius: 20')
+    replace('modules/common/widgets/WidgetCard.qml', 'color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colPrimaryContainer', 'color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colLayer1\n    border.width: 1\n    border.color: Qt.rgba(1, 1, 1, 0.1)')
+    replace('services/SystemInfo.qml', 'distroIcon = "fedora-symbolic"', 'distroIcon = "arch-symbolic"')
+    system_info = destination / 'services/SystemInfo.qml'
+    text = system_info.read_text()
+    text = re.sub(r'command: \["bash", "-c", "pacman_count=.*?\]\n', 'command: ["python3", Quickshell.shellPath("integration/host.py"), "count"]\n', text)
+    system_info.write_text(text)
+    updates = destination / 'services/Updates.qml'
+    text = updates.read_text().replace('["which", "checkupdates"]', '["python3", Quickshell.shellPath("integration/host.py"), "available"]')
+    text = re.sub(r'command: \["bash", "-c", "pacman=.*?\]\n', 'command: ["python3", Quickshell.shellPath("integration/host.py"), "check"]\n', text)
+    updates.write_text(text)
+    replace('modules/ii/background/widgets/weather/WeatherWidget.qml', 'if (root.sizeMode === "1x1") return oneByOneContent', 'if (!Weather.city && !Weather.gpsActive) return setupPrompt\n                if (root.sizeMode === "1x1") return oneByOneContent')
+    replace('modules/ii/background/widgets/weather/WeatherWidget.qml', '        // 1x1', '''        Component {
+            id: setupPrompt
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                StyledText { text: "Set your weather city"; font.pixelSize: 18 }
+                StyledText { text: "Choose a city in Services → Weather." }
+                Button { text: "Weather settings"; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
+            }
+        }
+        // 1x1''')
+    replace('modules/ii/background/widgets/weather/WeatherWidget.qml', 'import QtQuick.Layouts', 'import QtQuick.Layouts\nimport QtQuick.Controls')
     shutil.copytree(ROOT / 'integration/overrides', destination, dirs_exist_ok=True)
     shutil.copytree(ROOT / 'integration', destination / 'integration', ignore=shutil.ignore_patterns('__pycache__', 'overrides'))
     shutil.copy2(ROOT / 'quickshell/rice-desktop/tasks.py', destination / 'integration/tasks.py')
