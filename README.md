@@ -18,7 +18,7 @@ The widgets run as `rice-desktop.service`. The Hyprland startup entry imports th
 
 ## Use
 
-Press **Super + Ctrl + Shift + D** to visit an empty desktop workspace on the current monitor. Press it again to return. Application windows are not moved or closed. The widgets are on the laptop screen, so switch from that screen to interact with them.
+Press **Super + Ctrl + D** to visit an empty desktop workspace on the current monitor. Press it again to return. This replaces JaKooLit's default "remove master" binding. It is also listed in the **Super + H** cheat sheet, through a wrapper that leaves the vendor help script unchanged. Application windows are not moved or closed. The widgets are on the laptop screen, so switch from that screen to interact with them.
 
 Click the task field, type a task, and press Enter or the plus button. Use the circle to complete it, the pencil to edit, and the cross to delete. Press Enter or the save checkmark to save an edit, or Escape to cancel. Deleted tasks can be restored with Undo until the widget restarts or another task is deleted. Completed tasks live in a collapsible section.
 

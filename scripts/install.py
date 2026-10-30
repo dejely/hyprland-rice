@@ -112,7 +112,12 @@ def install(no_start, restore_bar=False):
     user = CONFIG / 'hypr/UserConfigs'
     additions = {
         user / 'Startup_Apps.conf': 'exec-once = bash "$HOME/.config/hypr/UserScripts/rice-desktop/start.sh"',
-        user / 'UserKeybinds.conf': 'bindd = SUPER CTRL SHIFT, D, Show desktop or return, exec, python3 "$HOME/.config/hypr/UserScripts/rice-desktop/desktop.py"',
+        user / 'UserKeybinds.conf': '\n'.join([
+            'unbind = SUPER CTRL, D',
+            'bindd = SUPER CTRL, D, Show desktop or return, exec, python3 "$HOME/.config/hypr/UserScripts/rice-desktop/desktop.py"',
+            'unbind = SUPER, H',
+            'bindd = SUPER, H, help / cheat sheet, exec, bash "$HOME/.config/hypr/UserScripts/rice-desktop/key-hints.sh"',
+        ]),
         user / 'WindowRules.conf': '\n'.join([
             'layerrule = match:namespace ^rice-desktop-.*, blur on',
             'layerrule = match:namespace ^rice-desktop-.*, ignore_alpha 0.2',
