@@ -22,6 +22,7 @@ Scope {
         function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
         function refreshTasks(): void { Todo.refresh(); }
         function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+        function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
         function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
         function help(): void { GlobalStates.overviewOpen = true; }
     }
