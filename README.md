@@ -1,8 +1,8 @@
 # hyprland-rice
 
-A small desktop customization for JaKooLit's Hyprland dots: a local task list, a clock card, and a compact bottom Waybar. The cards sit behind application windows and use the colors generated when you change wallpapers through JaKooLit's selector. Your wallpaper and existing overview stay in place.
+An Arch-styled desktop customization for JaKooLit's Hyprland dots: a local task list, a clock card, and a compact bottom Waybar with an Arch launcher icon. The cards sit behind application windows and use the colors generated when you change wallpapers through JaKooLit's selector. Your wallpaper and existing overview stay in place.
 
-This was built and checked on Hyprland 0.56.2, and Quickshell 0.3.2 at 1920 × 1200. The widget prefers the laptop's eDP display and falls back to the first screen. The configuration is intended for JaKooLit's existing directory structure, including its Wallust templates.
+The current configuration uses Hyprland 0.56.2 and Quickshell 0.3.2, with a layout checked at 1920 × 1200. The widget prefers the laptop's eDP display and falls back to the first screen. The configuration is intended for JaKooLit's existing directory structure, including its Wallust templates.
 
 ## Install
 
