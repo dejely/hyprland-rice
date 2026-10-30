@@ -47,7 +47,7 @@ HARNESS = '''
             }
             function move(x: int, y: int): void {
                 const item = bgRoot.riceFind(widgetCanvas, "rice-tasks");
-                item.x=x; item.y=y; item.commitPosition();
+                item.animateXPos=false; item.animateYPos=false; item.x=x; item.y=y; item.commitPosition();
             }
             function resize(width: int, height: int): void {
                 Config.options.background.widgets.todo.width=width;
@@ -143,7 +143,8 @@ def run(output):
             time.sleep(0.5)
             ipc('test', 'visibility', 'true')
             time.sleep(0.8)
-            assert json.loads(ipc('test', 'layout')) == dict(x=60, y=510, width=380, height=470)
+            layout = json.loads(ipc('test', 'layout'))
+            assert layout == dict(x=60, y=510, width=380, height=470), layout
             colors['accentPrimary'] = '#778899'
             atomic_json(palette, colors)
             wait(lambda s: s['accent'] == '#778899', 'palette update')
@@ -164,7 +165,8 @@ def run(output):
             process = start()
             wait(lambda s: s['tasks'] == 25, 'restart persistence')
             time.sleep(4)
-            assert json.loads(ipc('test', 'layout')) == dict(x=60, y=510, width=380, height=470)
+            layout = json.loads(ipc('test', 'layout'))
+            assert layout == dict(x=60, y=510, width=380, height=470), layout
             print('PASS task and moved/resized widget layout persistence after restart', flush=True)
             subprocess.run(['grim', '-o', output, '/tmp/rice-end4-verified.png'], check=True)
             tasks.write_text('{broken')
@@ -175,6 +177,11 @@ def run(output):
             log = (root / 'shell.log').read_text(errors='replace')
             errors = [line for line in log.splitlines() if 'Failed to load configuration' in line or 'ReferenceError:' in line or 'TypeError:' in line]
             assert not errors, '\n'.join(errors)
+        except Exception:
+            subprocess.run(['grim', '-o', output, '/tmp/rice-end4-failed.png'], check=False)
+            shutil.copy2(root / 'shell.log', '/tmp/rice-end4-failed.log')
+            shutil.copy2(root / 'config/hyprland-rice/end4/config.json', '/tmp/rice-end4-failed-config.json')
+            raise
         finally:
             stop()
             logfile.close()
