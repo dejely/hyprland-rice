@@ -93,7 +93,7 @@ Singleton {
     }
 
     function getData() {
-        const defaultApiKey = "8b05d62206f459e1d298cbe5844d7d87"
+        const defaultApiKey = ""
         let apiKey = KeyringStorage.keyringData?.apiKeys?.openweather || defaultApiKey
 
         if (!apiKey || apiKey === "") {
