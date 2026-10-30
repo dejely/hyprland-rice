@@ -199,6 +199,9 @@ def build(destination):
     text = re.sub(r'^.*id: "hero:(?:schemes|palette)".*\n', '', text, flags=re.MULTILINE)
     dashboard_settings.write_text(text)
     replace('modules/common/functions/Session.qml', 'import qs.services', 'import qs.services\nimport qs.modules.common.functions')
+    replace('modules/common/models/hyprland/MonitorConfigOption.qml', 'Quickshell.shellPath("scripts/hyprland/monitor_configurator.py")', 'Quickshell.shellPath("integration/monitor_config.py")')
+    replace('modules/common/models/hyprland/MonitorConfigOption.qml', '`${Directories.config}/hypr/monitors.lua`', '`${Directories.shellConfig}/monitors.conf`')
+    replace('modules/ii/settings/pages/HyprlandConfig.qml', 'Animation presets require a require line in your hyprland.lua. Add the following line to enable presets:', 'Animation presets open the installed JaKooLit animation menu.')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):

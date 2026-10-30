@@ -17,3 +17,14 @@ class HyprConfigTests(unittest.TestCase):
             before = path.read_bytes()
             with self.assertRaises(ValueError): update(path, [('general:gaps_in', '7\nexec = bad')], [])
             self.assertEqual(path.read_bytes(), before)
+
+
+class MonitorConfigTests(unittest.TestCase):
+    def test_conf_persists_mode_scale_and_reset(self):
+        from monitor_config import update
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / 'monitors.conf'
+            update(path, 'eDP-1', [('mode', '1920x1200@60'), ('scale', '1'), ('transform', '1')], [])
+            update(path, 'eDP-1', [], ['transform'])
+            self.assertIn('monitor = eDP-1, 1920x1200@60, auto, 1\n', path.read_text())
+            self.assertNotIn('transform', path.read_text())

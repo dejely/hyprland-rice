@@ -157,7 +157,9 @@ def install_end4():
         if not overrides.exists(): overrides.write_text('# Native dashboard overrides\n')
         defaults = CONFIG / 'hypr/UserConfigs/01-UserDefaults.conf'
         content = defaults.read_text() if defaults.exists() else ''
-        content += '\n# end4 profile\nsource = $HOME/.config/hyprland-rice/end4/hyprland.conf\n'
+        monitors = CONFIG / 'hyprland-rice/end4/monitors.conf'
+        if not monitors.exists(): monitors.write_text('# Native dashboard monitor overrides\n')
+        content += '\n# end4 profile\nsource = $HOME/.config/hyprland-rice/end4/hyprland.conf\nsource = $HOME/.config/hyprland-rice/end4/monitors.conf\n'
         change(defaults, content)
         rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf'  
         content = rules.read_text() if rules.exists() else ''
