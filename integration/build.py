@@ -198,6 +198,7 @@ def build(destination):
     text = dashboard_settings.read_text()
     text = re.sub(r'^.*id: "hero:(?:schemes|palette)".*\n', '', text, flags=re.MULTILINE)
     dashboard_settings.write_text(text)
+    replace('modules/common/functions/Session.qml', 'import qs.services', 'import qs.services\nimport qs.modules.common.functions')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):

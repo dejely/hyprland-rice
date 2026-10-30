@@ -35,7 +35,7 @@ def update(path, pairs, resets):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--file', type=Path, required=True)
+    parser.add_argument('--file', type=Path, default=Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'hyprland-rice/end4/hyprland.conf')
     parser.add_argument('--set', nargs=2, action='append', default=[])
     parser.add_argument('--reset', action='append', default=[])
     parser.add_argument('--anim-preset')
