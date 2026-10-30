@@ -24,6 +24,20 @@ AbstractBackgroundWidget {
         contentItem: StyledText { text: button.text; horizontalAlignment: Text.AlignHCenter; opacity: button.enabled ? 1 : 0.4 }
         background: Rectangle { radius: 10; color: button.hovered ? Appearance.colors.colLayer2 : Appearance.colors.colLayer1; border.width: 1; border.color: Appearance.colors.colLayer0Border }
     }
+    component TaskCheck: QQC.CheckBox {
+        id: check
+        implicitWidth: 28
+        implicitHeight: 34
+        indicator: Rectangle {
+            width: 22; height: 22
+            anchors.centerIn: parent
+            radius: 11
+            color: check.checked ? Appearance.colors.colPrimary : "transparent"
+            border.width: 1
+            border.color: Appearance.colors.colPrimary
+            StyledText { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: Appearance.colors.colOnPrimary }
+        }
+    }
     component TaskField: QQC.TextField {
         color: Appearance.colors.colOnLayer0
         placeholderTextColor: Appearance.colors.colSubtext
@@ -82,7 +96,7 @@ AbstractBackgroundWidget {
                     width: taskList.width
                     RowLayout {
                         Layout.fillWidth: true
-                        CheckBox {
+                        TaskCheck {
                             objectName: "toggle-" + row.modelData.id
                             checked: row.modelData.done
                             enabled: !Todo.busy
