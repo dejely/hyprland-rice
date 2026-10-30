@@ -69,6 +69,28 @@ def build(destination):
     replace('modules/ii/overview/Overview.qml', '        function clipboardToggle() {', '''        function help() { GlobalStates.overviewOpen = true; Qt.callLater(() => panelWindow.setSearchingText("<")); }
         function emojiToggle() { overviewScope.toggleEmojis(); }
         function clipboardToggle() {''')
+    replace('modules/ii/bar/Bar.qml', 'const screens = Quickshell.screens;', 'const screens = Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"));')
+    replace('modules/ii/bar/LauncherButton.qml', 'import QtQuick', 'import QtQuick\nimport Quickshell')
+    replace('modules/ii/bar/LauncherButton.qml', '''    MaterialSymbol {
+        anchors.centerIn: parent
+        iconSize: 18
+        text: "search"
+        color: root.contentColor
+    }''', '''    Image {
+        anchors.centerIn: parent
+        width: 18; height: 18
+        source: Quickshell.shellPath("assets/icons/arch-symbolic.svg")
+        sourceSize: Qt.size(18, 18)
+    }''')
+    replace('modules/ii/bar/BarContent.qml', 'item.hasOwnProperty("mirrored")', 'item.hasOwnProperty("mirrored") && modelData === "visualizer"')
+    replace('modules/common/Config.qml', '''property JsonObject todo: JsonObject {
+                        property bool enable: false''', '''property JsonObject todo: JsonObject {
+                        property real width: 360
+                        property real height: 460
+                        property bool enable: false''')
+    media = destination / 'modules/ii/background/widgets/media/MediaWidget.qml'
+    text = media.read_text().replace('Translation.tr("Something")', 'Translation.tr("No active player")').replace('Translation.tr("Play")', 'Translation.tr("No active player")')
+    media.write_text(text)
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):

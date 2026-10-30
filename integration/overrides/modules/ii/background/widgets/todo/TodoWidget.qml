@@ -1,10 +1,12 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
 import qs
 import qs.services
 import qs.modules.common
 import qs.modules.common.widgets
+import qs.modules.common.widgets.widgetCanvas
 import qs.modules.ii.background.widgets
 
 AbstractBackgroundWidget {
@@ -12,10 +14,29 @@ AbstractBackgroundWidget {
     objectName: "rice-tasks"
     configEntryName: "todo"
     hoverEnabled: true
-    implicitWidth: 360
-    implicitHeight: 460
+    implicitWidth: configEntry.width
+    implicitHeight: configEntry.height
     property string editingId: ""
+    component TaskButton: QQC.Button {
+        id: button
+        implicitHeight: 34
+        implicitWidth: 54
+        contentItem: StyledText { text: button.text; horizontalAlignment: Text.AlignHCenter; opacity: button.enabled ? 1 : 0.4 }
+        background: Rectangle { radius: 10; color: button.hovered ? Appearance.colors.colLayer2 : Appearance.colors.colLayer1; border.width: 1; border.color: Appearance.colors.colLayer0Border }
+    }
+    component TaskField: QQC.TextField {
+        color: Appearance.colors.colOnLayer0
+        placeholderTextColor: Appearance.colors.colSubtext
+        selectionColor: Appearance.colors.colPrimary
+        selectedTextColor: Appearance.colors.colOnPrimary
+        font.family: Appearance.font.family.main
+        font.pixelSize: 14
+        implicitHeight: 38
+        padding: 10
+        background: Rectangle { radius: 10; color: Appearance.colors.colLayer2; border.width: 1; border.color: Appearance.colors.colLayer0Border }
+    }
     WidgetCard {
+        id: card
         anchors.fill: parent
         widget: root
         ColumnLayout {
@@ -24,7 +45,7 @@ AbstractBackgroundWidget {
             RowLayout {
                 Layout.fillWidth: true
                 StyledText { text: "Tasks"; font.pixelSize: 22; Layout.fillWidth: true }
-                Button { objectName: "undo-delete"; text: "Undo"; enabled: !!Todo.deleted && !Todo.busy; onClicked: Todo.undo() }
+                TaskButton { objectName: "undo-delete"; text: "Undo"; enabled: !!Todo.deleted && !Todo.busy; onClicked: Todo.undo() }
             }
             StyledText {
                 Layout.fillWidth: true
@@ -34,8 +55,8 @@ AbstractBackgroundWidget {
                 wrapMode: Text.Wrap
                 color: Appearance.colors.colError
             }
-            Button { text: "Retry"; visible: Todo.error.length > 0; enabled: !Todo.busy; onClicked: Todo.refresh() }
-            TextField {
+            TaskButton { text: "Retry"; visible: Todo.error.length > 0; enabled: !Todo.busy; onClicked: Todo.refresh() }
+            TaskField {
                 id: newTask
                 objectName: "new-task"
                 Layout.fillWidth: true
@@ -75,7 +96,7 @@ AbstractBackgroundWidget {
                             font.strikeout: row.modelData.done
                             wrapMode: Text.Wrap
                         }
-                        TextField {
+                        TaskField {
                             id: editField
                             objectName: "edit-field-" + row.modelData.id
                             Layout.fillWidth: true
@@ -85,14 +106,14 @@ AbstractBackgroundWidget {
                             onAccepted: { if (Todo.edit(row.modelData.id, text)) root.editingId = ""; }
                             Keys.onEscapePressed: root.editingId = ""
                         }
-                        Button {
+                        TaskButton {
                             objectName: "edit-" + row.modelData.id
                             text: "✎"
                             implicitWidth: 32
                             enabled: !Todo.busy
                             onClicked: { root.editingId = row.modelData.id; editField.forceActiveFocus(); }
                         }
-                        Button {
+                        TaskButton {
                             objectName: "delete-" + row.modelData.id
                             text: "×"
                             implicitWidth: 32
@@ -101,6 +122,17 @@ AbstractBackgroundWidget {
                         }
                     }
                 }
+            }
+        }
+        ResizeHandler {
+            anchorItem: card
+            hoverActive: root.containsMouse
+            locked: Config.options.background.widgetsLocked
+            currentWidth: root.width
+            resizeMode: "diagonal"
+            onResizedXY: (dx, dy, startWidth) => {
+                root.configEntry.width = Math.max(320, Math.min(root.scaledScreenWidth, startWidth + dx));
+                root.configEntry.height = Math.max(260, Math.min(root.scaledScreenHeight - root.y, 460 + dy));
             }
         }
     }
