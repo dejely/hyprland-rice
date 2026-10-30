@@ -37,8 +37,9 @@ def build(destination):
     replace('shell.qml', '        LyricsService.restartLyrics()', '// Lyrics are opt-in.')
     replace('panelFamilies/IllogicalImpulseFamily.qml', '    PanelLoader { component: Lock {} }', '    // hyprlock remains the session lock.')
     replace('panelFamilies/IllogicalImpulseFamily.qml', '    PanelLoader { component: Polkit {} }', '    // Keep the existing session polkit agent.')
-    replace('modules/common/Directories.qml', '`${Directories.state}/user', '`${Directories.state}/hyprland-rice/end4/user')
-    replace('modules/common/Persistent.qml', 'property string fileDir: Directories.state', 'property string fileDir: `${Directories.state}/hyprland-rice/end4`')
+    replace('modules/common/Directories.qml', 'StandardPaths.standardLocations(StandardPaths.ConfigLocation)[0]', '\'file://\' + (Quickshell.env("XDG_CONFIG_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.config")')
+    replace('modules/common/Directories.qml', 'StandardPaths.standardLocations(StandardPaths.StateLocation)[0]', '\'file://\' + (Quickshell.env("XDG_STATE_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.local/state") + "/hyprland-rice/end4"')
+    replace('modules/common/Directories.qml', 'StandardPaths.standardLocations(StandardPaths.CacheLocation)[0]', '\'file://\' + (Quickshell.env("XDG_CACHE_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.cache") + "/hyprland-rice/end4"')
     replace('services/Wallpapers.qml', '`${Directories.pictures}/Wallpapers`', '`${Directories.pictures}/wallpapers`')
     replace('modules/common/Appearance.qml', 'property int normal: 17', 'property int normal: 20')
     replace('modules/common/Appearance.qml', 'property int large: 23', 'property int large: 20')
@@ -65,6 +66,9 @@ def build(destination):
         script = re.search(r'\$SCRIPT_DIR/([^"\s]+\.py)', original)
         if script:
             wrapper.write_text('#!/usr/bin/env bash\nset -euo pipefail\nSCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec python3 "$SCRIPT_DIR/' + script[1] + '" "$@"\n')
+    replace('modules/ii/overview/Overview.qml', '        function clipboardToggle() {', '''        function help() { GlobalStates.overviewOpen = true; Qt.callLater(() => panelWindow.setSearchingText("<")); }
+        function emojiToggle() { overviewScope.toggleEmojis(); }
+        function clipboardToggle() {''')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
