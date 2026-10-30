@@ -75,16 +75,30 @@ def rollback():
 
 def install_end4():
     if MANIFEST.exists():
+        manifest = json.loads(MANIFEST.read_text())
+        path = CONFIG / 'quickshell/rice-desktop'
+        entry = next(e for e in manifest['entries'] if e['path'] == str(path))
+        if not path.is_symlink() or os.readlink(path) != entry['installed_link']:
+            raise RuntimeError(f'Profile link changed externally; preserved: {path}')
+        runtime = build(STATE / 'end4-runtimes' / datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+        temporary = path.with_name('rice-desktop.next')
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(runtime)
+        os.replace(temporary, path)
+        entry['installed_link'] = str(runtime)
+        atomic_json(MANIFEST, manifest)
         set_profile('end4')
         return
     if not (CONFIG / 'hypr/hyprland.conf').is_file():
         raise RuntimeError('Install JaKooLit/Hyprland first.')
     for cmd in ('qs', 'hyprctl', 'systemctl', 'wallust', 'python3'):
         if not shutil.which(cmd): raise RuntimeError(f'Missing dependency: {cmd}')
-    runtime = build(STATE / 'end4-runtime')
+    runtime = build(STATE / 'end4-runtimes' / datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     backup = STATE / 'backups' / ('end4-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     backup.mkdir(parents=True)
     entries = []
+    existing_settings = CONFIG / 'hyprland-rice/end4/config.json'
+    if existing_settings.exists(): shutil.copy2(existing_settings, backup / 'settings.json')
 
     def change(path, content=None, target=None):
         entry = snapshot(path, backup, len(entries))

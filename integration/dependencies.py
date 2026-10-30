@@ -17,7 +17,7 @@ def inventory():
     qml = Path('/usr/lib64/qt6/qml/org/kde/syntaxhighlighting/qmldir')
     return {'host': platform.freedesktop_os_release()['ID'],
             'commands': {name: shutil.which(name) for name in COMMANDS},
-            'syntax_highlighting': qml.is_file() or (local / 'usr/lib64/qt6/qml/org/kde/syntaxhighlighting/qmldir').is_file()}
+            'syntax_highlighting': qml.is_file() or Path('/usr/lib/qt6/qml/org/kde/syntaxhighlighting/qmldir').is_file() or (local / 'usr/lib64/qt6/qml/org/kde/syntaxhighlighting/qmldir').is_file()}
 
 
 def install_missing():
