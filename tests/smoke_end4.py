@@ -65,6 +65,10 @@ def run(output):
         bg = runtime / 'modules/ii/background/Background.qml'
         source = bg.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         bg.write_text(source.replace('        id: bgRoot', '        id: bgRoot\n' + HARNESS, 1))
+        dashboard = runtime / 'modules/ii/settings/DashboardSettingsPage.qml'
+        source = dashboard.read_text().replace('import QtQuick\n', 'import QtQuick\nimport Quickshell.Io\n', 1)
+        source = source.replace('    id: root', '    id: root\n    IpcHandler { target: "dashboard-test"; function cards(): int { return root.layoutResult.count; } }', 1)
+        dashboard.write_text(source)
         data = json.loads((ROOT / 'integration/defaults.json').read_text())
         data['background']['wallpaperPath'] = str((Path.home() / '.config/rofi/.current_wallpaper').resolve())
         # Isolate the native file picker from the wallpaper library.
@@ -171,10 +175,11 @@ def run(output):
                 time.sleep(0.8)
                 if target == 'wallpaperSelector': ipc(target, 'toggle')
                 else: ipc(target, 'close')
-            for method, group in [('colors', 'interface'), ('barStyle', 'bar'), ('barLayout', 'bar')]:
+            for method, group in [('colors', 'Interface'), ('barStyle', 'Bar'), ('barLayout', 'Bar')]:
                 ipc('desktop', method)
                 wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation')
                 time.sleep(1.5)
+                assert int(ipc('dashboard-test', 'cards')) > 0, (method, group, 'Empty settings group')
                 ipc('settings', 'close')
             print('PASS dashboard, targeted color/bar settings, native shortcut help, wallpaper and notifications IPC', flush=True)
             stop()
