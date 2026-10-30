@@ -158,6 +158,42 @@ def build(destination):
     replace('modules/ii/settings/pages/HyprlandConfig.qml', 'onRunningChanged: if (!running) reloadAnimProc.running = true', 'onExited: (code, status) => { if (code === 0) reloadAnimProc.running = true; }')
     replace('modules/common/models/hyprland/MonitorConfigOption.qml', 'onRunningChanged: if (!running) reloadProc.running = true', 'onExited: (code, status) => { if (code === 0) reloadProc.running = true; }')
     replace('modules/ii/settings/pages/HyprlandConfig.qml', 'onValueChanged: kbLayoutDebounceTimer.restart()', 'onValueChanged: if (kbLayoutField.textArea.activeFocus) kbLayoutDebounceTimer.restart()')
+    replace('modules/common/models/WorkspaceModel.qml', 'return hyprMonitor?.activeWorkspace?.id ?? 1', 'return Math.max(1, hyprMonitor?.activeWorkspace?.id ?? 1)')
+    replace('GlobalStates.qml', 'root.dashboardGroup = pageId;', 'root.dashboardGroup = SettingsPages.byId(pageId)?.name || pageId;')
+    replace('modules/ii/settings/DashboardContent.qml', 'settingsLoader.item.openSection(target.page, target.section || "");', 'settingsLoader.item.openSection(SettingsPages.byId(target.page)?.name || target.page, target.section || "");')
+    replace('modules/ii/settings/DashboardContent.qml', 'text: SystemInfo.distroName', 'text: "Arch Linux"')
+    replace('modules/ii/settings/DashboardContent.qml', 'source: Quickshell.iconPath(SystemInfo.logo)', 'source: Quickshell.shellPath("assets/icons/arch-symbolic.svg")')
+    replace('modules/ii/settings/DashboardSettingsCatalog.qml', 'readonly property var sections: [', '''readonly property var sections: [
+        { page: Translation.tr("Interface"), title: Translation.tr("Wallpaper colors"), icon: "palette", cards: [
+            { type: "riceWallpaper", title: Translation.tr("Wallpaper colors"), icon: "wallpaper" }
+        ] },''')
+    replace('modules/ii/settings/DashboardSettingsPage.qml', 'if (type === "style")', 'if (type === "riceWallpaper") return [4, 2];\n        if (type === "style")')
+    replace('modules/ii/settings/DashboardSettingsPage.qml', ': modelData.type === "style" ? styleComponent', ': modelData.type === "riceWallpaper" ? riceWallpaperComponent\n                            : modelData.type === "style" ? styleComponent')
+    replace('modules/ii/settings/DashboardSettingsPage.qml', '''                        Component {
+                            id: styleComponent''', '''                        Component {
+                            id: riceWallpaperComponent
+                            Rectangle {
+                                color: Appearance.colors.colLayer1
+                                radius: 20
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 20
+                                    StyledText { text: "Wallpaper colors"; font.pixelSize: 22 }
+                                    StyledText { text: "Apply wallpaper colors to your desktop and applications."; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                    RippleButtonWithIcon {
+                                        objectName: "rice-choose-wallpaper"
+                                        mainText: "Choose wallpaper"; materialIcon: "wallpaper"
+                                        onClicked: { GlobalStates.settingsOpen = false; GlobalStates.wallpaperSelectorOpen = true; }
+                                    }
+                                    RippleButtonWithIcon {
+                                        mainText: "Regenerate colors"; materialIcon: "refresh"
+                                        onClicked: SystemTheming.regenerateColors()
+                                    }
+                                }
+                            }
+                        }
+                        Component {
+                            id: styleComponent''')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
