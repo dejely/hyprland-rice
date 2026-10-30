@@ -109,7 +109,7 @@ def build(destination):
         text = text.replace('model: Quickshell.screens', 'model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))')
         path.write_text(text)
     replace('services/HyprlandBackend.qml', 'hl.dsp.focus({workspace = "r${direction === "next" ? "+1" : "-1"}"})', 'workspace r${direction === "next" ? "+1" : "-1"}')
-    replace('modules/common/functions/Session.qml', 'Quickshell.execDetached(["loginctl", "lock-session"]);', 'Quickshell.execDetached(["hyprlock"]);')
+    replace('modules/common/functions/Session.qml', 'Quickshell.execDetached(["loginctl", "lock-session"]);', 'Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"]);')
     replace('modules/common/widgets/WidgetCard.qml', 'radius: Appearance.rounding?.verylarge ?? 30', 'radius: 20')
     replace('modules/common/widgets/WidgetCard.qml', 'color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colPrimaryContainer', 'color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colLayer1\n    border.width: 1\n    border.color: Qt.rgba(1, 1, 1, 0.1)')
     replace('services/SystemInfo.qml', 'distroIcon = "fedora-symbolic"', 'distroIcon = "arch-symbolic"')
@@ -141,7 +141,7 @@ def build(destination):
     for path in destination.rglob('*.qml'):
         if path.is_symlink():
             continue
-        text = path.read_text().replace('GlobalStates.screenLocked = true', 'Quickshell.execDetached(["hyprlock"])')
+        text = path.read_text().replace('GlobalStates.screenLocked = true', 'Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"])')
         path.write_text(text)
     shell = destination / 'shell.qml'
     text = shell.read_text().replace('    ReloadPopup {}', '    ReloadPopup {}\n    RiceBridge {}')

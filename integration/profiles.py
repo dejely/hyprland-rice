@@ -135,7 +135,11 @@ def install_end4():
         # Super+Shift+D is retained by the original block when present.
         content += '\n# BEGIN rice-end4 shortcuts\n' + (ROOT / 'integration/keybinds.conf').read_text() + '# END rice-end4 shortcuts\n'
         change(keys, content)
-        rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf'
+        idle = CONFIG / 'hypr/hypridle.conf'
+        if idle.is_file():
+            content = re.sub(r'(?m)^(\s*lock_cmd\s*=).*$', r'\1 bash "$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh"', idle.read_text())
+            change(idle, content)
+        rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf' 
         content = rules.read_text() if rules.exists() else ''
         content += '\n# end4 profile\nlayerrule = match:namespace ^quickshell:.*, blur on\nlayerrule = match:namespace ^quickshell:.*, ignore_alpha 0.2\n'
         change(rules, content)
@@ -151,9 +155,13 @@ def activate(name):
     subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
     subprocess.run(['hyprctl', 'reload'], check=True)
     if name == 'end4':
-        for process in ('waybar', 'swaync', 'swww-daemon'):
+        for process in ('waybar', 'swaync', 'swww-daemon', 'dunst', 'mako', 'hyprpaper', 'mpvpaper'):
             subprocess.run(['pkill', '-x', process], check=False)
         subprocess.run(['qs', '-c', 'overview', 'kill'], check=False, stdout=subprocess.DEVNULL)
+    if subprocess.run(['pgrep', '-x', 'hypridle'], stdout=subprocess.DEVNULL).returncode == 0:
+        subprocess.run(['pkill', '-x', 'hypridle'], check=False)
+        with (STATE / 'hypridle.log').open('a') as log:
+            subprocess.Popen(['hypridle'], stdout=log, stderr=log, start_new_session=True)
     subprocess.run(['bash', str(ROOT / 'scripts/start.sh')], check=True)
     subprocess.run(['systemctl', '--user', 'restart', 'rice-desktop.service'], check=True)
     if name == 'jakoolit':
