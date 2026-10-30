@@ -23,6 +23,7 @@ def update(path, output, pairs, resets):
             if key not in FIELDS or any(c in value for c in '\n\r#{},'):
                 raise ValueError('Invalid monitor option')
             options[key] = value
+        if not options: data.pop(output, None)
         lines = ['# Native dashboard monitor overrides\n']
         for name, opts in sorted(data.items()):
             if opts.get('disabled') == '1':
