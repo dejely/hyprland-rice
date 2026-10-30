@@ -148,6 +148,13 @@ def build(destination):
             }
         }'''
     interface.write_text(text[:begin] + replacement + text[end + 1:])
+    # Settings pages are also instantiated by search indexing. Never apply their
+    # default compositor options merely by loading the page.
+    hypr_page = destination / 'modules/ii/settings/pages/HyprlandConfig.qml'
+    text = hypr_page.read_text()
+    begin = text.index('    Component.onCompleted: {')
+    end = text.index('    MonitorConfigOption', begin)
+    hypr_page.write_text(text[:begin] + '    Component.onCompleted: HyprlandOptions.refresh()\n' + text[end:])
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
