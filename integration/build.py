@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Build the pinned shell with reviewable compatibility changes outside vendor/."""
+from pathlib import Path
+import argparse
+import shutil
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def build(destination):
+    destination = Path(destination).resolve()
+    if destination == ROOT or ROOT in destination.parents:
+        raise ValueError('Runtime must be outside the checkout')
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(ROOT / 'vendor/end4-pC', destination, dirs_exist_ok=True, symlinks=True)
+    for path in destination.rglob('*'):
+        if path.is_symlink() or not path.is_file() or path.suffix not in ('.qml', '.sh', '.py', '.json'):
+            continue
+        text = path.read_text()
+        text = text.replace('illogical-impulse', 'hyprland-rice/end4')
+        path.write_text(text)
+
+    def replace(name, old, new):
+        path = destination / name
+        text = path.read_text()
+        if old not in text:
+            raise ValueError(f'Patch anchor missing: {name}: {old[:70]}')
+        path.write_text(text.replace(old, new))
+
+    replace('shell.qml', '        FirstRunExperience.load()', '// First-run wallpaper replacement is managed by the integration.')
+    replace('shell.qml', '        ConflictKiller.load()', '// Profile switching manages competing processes.')
+    replace('shell.qml', '        LyricsService.restartLyrics()', '// Lyrics are opt-in.')
+    replace('panelFamilies/IllogicalImpulseFamily.qml', '    PanelLoader { component: Lock {} }', '    // hyprlock remains the session lock.')
+    replace('panelFamilies/IllogicalImpulseFamily.qml', '    PanelLoader { component: Polkit {} }', '    // Keep the existing session polkit agent.')
+    replace('modules/common/Directories.qml', '`${Directories.state}/user', '`${Directories.state}/hyprland-rice/end4/user')
+    replace('modules/common/Persistent.qml', 'property string fileDir: Directories.state', 'property string fileDir: `${Directories.state}/hyprland-rice/end4`')
+    replace('services/Wallpapers.qml', '`${Directories.pictures}/Wallpapers`', '`${Directories.pictures}/wallpapers`')
+    replace('modules/common/Config.qml', 'property int normal: 17', 'property int normal: 20') if False else None
+    replace('modules/common/Appearance.qml', 'property int normal: 17', 'property int normal: 20')
+    replace('modules/common/Appearance.qml', 'property int large: 23', 'property int large: 20')
+    # Do not apply illogical-impulse Lua overrides to JaKooLit on startup.
+    replace('services/MaterialThemeLoader.qml', '        HyprlandConfig.applyBorderColors()', '        // Keep JaKooLit window borders.')
+    replace('services/MaterialThemeLoader.qml', '        const json = JSON.parse(fileContent)', '''        let json;
+        try { json = JSON.parse(fileContent); } catch (e) { return; }
+        if (!json || !json.primary || !json.background) return;
+        for (const value of Object.values(json)) {
+            if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value)) return;
+        }''')
+    replace('modules/common/Config.qml', '''property string update: "kitty -1 --hold=yes fish -i -c 'pkexec pacman -Syu'"''', '''property string update: "kitty --hold python3 \\\"" + Quickshell.shellPath("integration/host.py") + "\\\" update"''')
+    # Remove upstream's implicit shared API key; leave account services unconfigured.
+    import re
+    weather = destination / 'services/Weather.qml'
+    source = weather.read_text()
+    source = re.sub(r'const defaultApiKey = "[^"]*"', 'const defaultApiKey = ""', source)
+    source = source.replace('    function getData() {', '    function getData() {\n        if (!root.city && !root.gpsActive) return;')
+    weather.write_text(source)
+    # Integration-owned scripts use system Python, never an unconfigured upstream venv.
+    for wrapper in destination.rglob('*-venv.sh'):
+        original = wrapper.read_text()
+        script = re.search(r'\$SCRIPT_DIR/([^"\s]+\.py)', original)
+        if script:
+            wrapper.write_text('#!/usr/bin/env bash\nset -euo pipefail\nSCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec python3 "$SCRIPT_DIR/' + script[1] + '" "$@"\n')
+    shutil.copytree(ROOT / 'integration/overrides', destination, dirs_exist_ok=True)
+    shutil.copytree(ROOT / 'integration', destination / 'integration', ignore=shutil.ignore_patterns('__pycache__', 'overrides'))
+    shutil.copy2(ROOT / 'quickshell/rice-desktop/tasks.py', destination / 'integration/tasks.py')
+    # Session screen lock actions must invoke the retained lock implementation too.
+    for path in destination.rglob('*.qml'):
+        if path.is_symlink():
+            continue
+        text = path.read_text().replace('GlobalStates.screenLocked = true', 'Quickshell.execDetached(["hyprlock"])')
+        path.write_text(text)
+    shell = destination / 'shell.qml'
+    text = shell.read_text().replace('    ReloadPopup {}', '    ReloadPopup {}\n    RiceBridge {}')
+    shell.write_text(text)
+    print(destination)
+    return destination
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('destination', type=Path)
+    build(parser.parse_args().destination)
