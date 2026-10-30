@@ -15,7 +15,7 @@ Scope {
     IpcHandler {
         target: "desktop"
         function status(): string {
-            return JSON.stringify({busy: Todo.busy, error: Todo.error, tasks: Todo.list.length,
+            return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
                 completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
                 settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
         }
