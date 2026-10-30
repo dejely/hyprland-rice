@@ -74,8 +74,13 @@ def run(output):
         colors = dict(windowBackground='#10151c', primaryText='#eeeeee', secondaryText='#aaaaaa', accentPrimary='##aabbcc')
         atomic_json(palette, colors)
         sync(palette, root / 'state/hyprland-rice/end4/user/generated/colors.json')
+        tools = root / 'bin'
+        tools.mkdir()
+        trace = tools / 'hyprctl'
+        trace.write_text('#!/usr/bin/env bash\nif [[ \"${1:-}\" == reload ]]; then ps -p \"$PPID\" -o args= >> \"$RICE_COMMAND_LOG\"; fi\nprintf "%s\\n" "$*" >> "$RICE_COMMAND_LOG"\nexec /usr/bin/hyprctl "$@"\n')
+        trace.chmod(0o755)
         deps = Path.home() / '.local/share/hyprland-rice/deps/usr/lib64'
-        env = dict(os.environ, QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
+        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
                    XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_STATE_HOME=str(root / 'state'), XDG_CACHE_HOME=str(root / 'cache'), RICE_TEST_OUTPUT=output)
         # Private bus prevents taking the laptop notification service name.
@@ -113,6 +118,11 @@ def run(output):
             process = start()
             wait(lambda s: s['accent'] == '#aabbcc', 'native shell startup')
             time.sleep(4)
+            assert '\nreload\n' not in (root / 'commands.log').read_text(), 'Shell reloaded compositor during startup'
+            if os.environ.get('RICE_STARTUP_ONLY'):
+                print((root / 'commands.log').read_text())
+                print(subprocess.check_output(['hyprctl', 'monitors', '-j'], text=True))
+                return
             ui('enter', 'new-task', 'banana native task <b>literal</b>')
             wait(lambda s: s['tasks'] == 1, 'task entry')
             task_id = json.loads(tasks.read_text())['tasks'][0]['id']
@@ -186,6 +196,7 @@ def run(output):
         except Exception:
             subprocess.run(['grim', '-o', output, '/tmp/rice-end4-failed.png'], check=False)
             shutil.copy2(root / 'shell.log', '/tmp/rice-end4-failed.log')
+            shutil.copy2(root / 'commands.log', '/tmp/rice-end4-failed-commands.log')
             shutil.copy2(root / 'config/hyprland-rice/end4/config.json', '/tmp/rice-end4-failed-config.json')
             raise
         finally:

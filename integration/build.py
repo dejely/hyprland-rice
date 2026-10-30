@@ -155,6 +155,9 @@ def build(destination):
     begin = text.index('    Component.onCompleted: {')
     end = text.index('    MonitorConfigOption', begin)
     hypr_page.write_text(text[:begin] + '    Component.onCompleted: HyprlandOptions.refresh()\n' + text[end:])
+    replace('modules/ii/settings/pages/HyprlandConfig.qml', 'onRunningChanged: if (!running) reloadAnimProc.running = true', 'onExited: (code, status) => { if (code === 0) reloadAnimProc.running = true; }')
+    replace('modules/common/models/hyprland/MonitorConfigOption.qml', 'onRunningChanged: if (!running) reloadProc.running = true', 'onExited: (code, status) => { if (code === 0) reloadProc.running = true; }')
+    replace('modules/ii/settings/pages/HyprlandConfig.qml', 'onValueChanged: kbLayoutDebounceTimer.restart()', 'onValueChanged: if (kbLayoutField.textArea.activeFocus) kbLayoutDebounceTimer.restart()')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
