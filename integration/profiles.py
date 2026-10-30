@@ -139,7 +139,13 @@ def install_end4():
         if idle.is_file():
             content = re.sub(r'(?m)^(\s*lock_cmd\s*=).*$', r'\1 bash "$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh"', idle.read_text())
             change(idle, content)
-        rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf' 
+        overrides = CONFIG / 'hyprland-rice/end4/hyprland.conf'
+        if not overrides.exists(): overrides.write_text('# Native dashboard overrides\n')
+        defaults = CONFIG / 'hypr/UserConfigs/01-UserDefaults.conf'
+        content = defaults.read_text() if defaults.exists() else ''
+        content += '\n# end4 profile\nsource = $HOME/.config/hyprland-rice/end4/hyprland.conf\n'
+        change(defaults, content)
+        rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf'  
         content = rules.read_text() if rules.exists() else ''
         content += '\n# end4 profile\nlayerrule = match:namespace ^quickshell:.*, blur on\nlayerrule = match:namespace ^quickshell:.*, ignore_alpha 0.2\n'
         change(rules, content)
