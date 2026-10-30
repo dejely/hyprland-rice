@@ -107,6 +107,18 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(os.readlink(self.config / 'quickshell/rice-desktop'), str(ROOT / 'quickshell/rice-desktop'))
         self.assertTrue(settings.read_text().endswith('\n\n'))
 
+    def test_uninstall_keeps_tasks_wallpapers_and_native_settings(self):
+        self.switch('end4')
+        tasks = self.home / '.local/share/hyprland-rice/tasks.json'
+        tasks.parent.mkdir(parents=True)
+        tasks.write_text('personal task fixture')
+        result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), 'uninstall', '--no-start'], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(tasks.read_text(), 'personal task fixture')
+        self.assertTrue((self.home / 'wallpaper.png').exists())
+        self.assertTrue((self.config / 'hyprland-rice/end4/config.json').exists())
+        self.assertEqual((self.config / 'hypr/UserConfigs/UserKeybinds.conf').read_text(), self.keys)
+
     def test_rollback_refuses_to_discard_later_user_edits(self):
         self.switch('end4')
         keys = self.config / 'hypr/UserConfigs/UserKeybinds.conf'
