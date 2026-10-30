@@ -20,9 +20,9 @@ def main(action):
         return
     mapping = {
         'launcher': ('search', 'toggle'), 'overview': ('search', 'workspacesToggle'),
-        'wallpaper': ('wallpaperSelector', 'toggle'), 'colors': ('desktop', 'settings', 'interface'),
-        'settings': ('settings', 'toggle'), 'bar-style': ('desktop', 'settings', 'bar'),
-        'bar-layout': ('desktop', 'settings', 'bar'), 'bar-toggle': ('bar', 'toggle'),
+        'wallpaper': ('wallpaperSelector', 'toggle'), 'colors': ('desktop', 'colors'),
+        'settings': ('settings', 'toggle'), 'bar-style': ('desktop', 'barStyle'),
+        'bar-layout': ('desktop', 'barLayout'), 'bar-toggle': ('bar', 'toggle'),
         'clipboard': ('search', 'clipboardToggle'), 'notifications': ('sidebarRight', 'toggle'),
         'help': ('search', 'help'), 'emoji': ('search', 'emojiToggle'),
         'random-wallpaper': ('wallpaperSelector', 'random'),

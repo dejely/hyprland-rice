@@ -22,6 +22,9 @@ Scope {
         function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
         function refreshTasks(): void { Todo.refresh(); }
         function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+        function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
+        function barLayout(): void { GlobalStates.openSettingsAt("bar", "", "Bar layout", ""); }
+        function colors(): void { GlobalStates.openSettingsAt("interface", "", "Wallpaper colors", ""); }
         function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
         function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
         function help(): void { GlobalStates.overviewOpen = true; }

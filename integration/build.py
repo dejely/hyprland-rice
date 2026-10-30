@@ -95,6 +95,59 @@ def build(destination):
     replace('services/Wallpapers.qml', '''            "bash", "-c",
             `${thumbgenScriptPath} --size ${size} --machine_progress -d ${FileUtils.trimFileProtocol(root.directory)} || ${generateThumbnailsMagickScriptPath} --size ${size} -d ${FileUtils.trimFileProtocol(root.directory)}`,''', '''            "bash", generateThumbnailsMagickScriptPath, "--size", size, "-d", FileUtils.trimFileProtocol(root.directory),''')
     replace('modules/common/widgets/ThumbnailImage.qml', 'thumb="$1"; src="$2"; max="$3"', 'thumb="$1"; src="$2"; max="$3"; mkdir -p "$(dirname "$thumb")"')
+    replace('GlobalStates.qml', '        root.settingsOpen = true;', '''        if (Config.options.settings.style === "dashboard") {
+            root.dashboardPage = 4;
+            root.dashboardGroup = pageId;
+        }
+        root.settingsOpen = true;''')
+    replace('modules/ii/settings/DashboardContent.qml', '    property int currentPage: GlobalStates.dashboardPage', '''    Connections {
+        target: GlobalStates
+        function onSettingsTargetChanged() {
+            if (!GlobalStates.settingsTarget) return;
+            if (root.currentPage !== root.settingsPage) root.goToPage(root.settingsPage);
+            riceTargetTimer.restart();
+        }
+    }
+    Timer {
+        id: riceTargetTimer
+        interval: 800
+        onTriggered: {
+            const target = GlobalStates.settingsTarget;
+            if (target && settingsLoader.item) {
+                settingsLoader.item.openSection(target.page, target.section || "");
+                GlobalStates.settingsTarget = null;
+            }
+        }
+    }
+    property int currentPage: GlobalStates.dashboardPage''')
+    replace('services/HyprlandConfig.qml', 'Quickshell.shellPath("scripts/hyprland/hyprconfigurator.py")', 'Quickshell.shellPath("integration/hypr_config.py")')
+    replace('services/HyprlandConfig.qml', '`${Directories.config}/hypr/hyprland/shellOverrides/main.lua`', '`${Directories.shellConfig}/hyprland.conf`')
+    # Native color controls describe the installed wallpaper pipeline.
+    interface = destination / 'modules/ii/settings/pages/InterfaceConfig.qml'
+    text = interface.read_text()
+    begin = text.index('        ContentSection {')
+    depth, end = 0, begin
+    for end in range(begin, len(text)):
+        if text[end] == '{': depth += 1
+        elif text[end] == '}':
+            depth -= 1
+            if depth == 0: break
+    replacement = '''        ContentSection {
+            title: Translation.tr("Wallpaper colors")
+            icon: "palette"
+            StyledText { text: "Choose a wallpaper to update desktop and application colors."; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            RippleButtonWithIcon {
+                buttonText: "Choose wallpaper"
+                iconName: "wallpaper"
+                onClicked: { GlobalStates.settingsOpen = false; GlobalStates.wallpaperSelectorOpen = true; }
+            }
+            RippleButtonWithIcon {
+                buttonText: "Regenerate wallpaper colors"
+                iconName: "refresh"
+                onClicked: SystemTheming.regenerateColors()
+            }
+        }'''
+    interface.write_text(text[:begin] + replacement + text[end + 1:])
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
