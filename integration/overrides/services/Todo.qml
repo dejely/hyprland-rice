@@ -56,5 +56,4 @@ Singleton {
         }
         onExited: (code, status) => { worker.exited = true; root.finish(); }
     }
-    Timer { interval: 3000; running: true; repeat: true; onTriggered: { if (!root.busy) root.refresh(); } }
 }
