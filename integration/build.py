@@ -65,7 +65,7 @@ def build(destination):
         original = wrapper.read_text()
         script = re.search(r'\$SCRIPT_DIR/([^"\s]+\.py)', original)
         if script:
-            wrapper.write_text('#!/usr/bin/env bash\nset -euo pipefail\nSCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec python3 "$SCRIPT_DIR/' + script[1] + '" "$@"\n')
+            wrapper.write_text('#!/usr/bin/env bash\nset -euo pipefail\nSCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"\nexec /usr/bin/python3 "$SCRIPT_DIR/' + script[1] + '" "$@"\n')
     replace('modules/ii/overview/Overview.qml', '        function clipboardToggle() {', '''        function help() { GlobalStates.overviewOpen = true; Qt.callLater(() => panelWindow.setSearchingText("<")); }
         function emojiToggle() { overviewScope.toggleEmojis(); }
         function clipboardToggle() {''')
@@ -91,6 +91,10 @@ def build(destination):
     media = destination / 'modules/ii/background/widgets/media/MediaWidget.qml'
     text = media.read_text().replace('Translation.tr("Something")', 'Translation.tr("No active player")').replace('Translation.tr("Play")', 'Translation.tr("No active player")')
     media.write_text(text)
+    replace('modules/ii/background/widgets/clock/ClockWidget.qml', 'needsColText: clockStyle === "digital" || clockStyle === "daily"', 'needsColText: !customClockColorKey && (clockStyle === "digital" || clockStyle === "daily")')
+    replace('services/Wallpapers.qml', '''            "bash", "-c",
+            `${thumbgenScriptPath} --size ${size} --machine_progress -d ${FileUtils.trimFileProtocol(root.directory)} || ${generateThumbnailsMagickScriptPath} --size ${size} -d ${FileUtils.trimFileProtocol(root.directory)}`,''', '''            "bash", generateThumbnailsMagickScriptPath, "--size", size, "-d", FileUtils.trimFileProtocol(root.directory),''')
+    replace('modules/common/widgets/ThumbnailImage.qml', 'thumb="$1"; src="$2"; max="$3"', 'thumb="$1"; src="$2"; max="$3"; mkdir -p "$(dirname "$thumb")"')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
