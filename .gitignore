@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+tasks.json
+*.log
+screenshots/
+wallpapers/
+backups/

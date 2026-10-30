@@ -1,0 +1,55 @@
+{
+  "layer": "top",
+  "position": "bottom",
+  "height": 42,
+  "width": 900,
+  "margin-bottom": 12,
+  "spacing": 4,
+  "exclusive": true,
+  "fixed-center": true,
+  "ipc": true,
+  "modules-left": ["custom/launcher", "hyprland/workspaces"],
+  "modules-center": ["clock"],
+  "modules-right": ["tray", "pulseaudio", "network", "battery"],
+  "custom/launcher": {
+    "format": "󰣛",
+    "tooltip-format": "Applications",
+    "on-click": "rofi -show drun"
+  },
+  "hyprland/workspaces": {
+    "format": "{icon}",
+    "format-icons": {"default": "○", "active": "●", "urgent": "!"},
+    "on-click": "activate",
+    "sort-by-number": true,
+    "all-outputs": false
+  },
+  "clock": {
+    "format": "{:%a  ·  %H:%M}",
+    "tooltip-format": "<big>{:%B %Y}</big>\n<tt><small>{calendar}</small></tt>"
+  },
+  "tray": {"spacing": 10, "icon-size": 16},
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰖁 Muted",
+    "format-icons": {"default": ["󰕿", "󰖀", "󰕾"]},
+    "on-click": "pavucontrol",
+    "on-click-right": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+    "scroll-step": 5
+  },
+  "network": {
+    "format-wifi": "󰤨",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰤭",
+    "tooltip-format": "{ifname}: {ipaddr}",
+    "tooltip-format-wifi": "{essid} · {signalStrength}%",
+    "on-click": "nm-connection-editor"
+  },
+  "battery": {
+    "format": "{icon} {capacity}%",
+    "format-charging": "󰂄 {capacity}%",
+    "format-plugged": "󰚥 {capacity}%",
+    "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰁹"],
+    "states": {"warning": 25, "critical": 10},
+    "tooltip-format": "{timeTo}"
+  }
+}

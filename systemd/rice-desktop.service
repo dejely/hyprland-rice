@@ -1,0 +1,10 @@
+[Unit]
+Description=Wallpaper-themed desktop clock and local tasks
+PartOf=graphical-session.target
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+ExecStart=/usr/bin/qs --no-duplicate --config rice-desktop
+Restart=always
+RestartSec=1
