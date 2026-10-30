@@ -99,7 +99,8 @@ def run(output):
 
         def ui(method, *args):
             time.sleep(0.25)
-            assert ipc('test', method, *args) == 'true', (method, args)
+            result = ipc('test', method, *args)
+            assert result == 'true', (method, args, ipc('desktop', 'status'))
             time.sleep(0.25)
 
         def stop():
@@ -160,7 +161,12 @@ def run(output):
                 time.sleep(0.8)
                 if target == 'wallpaperSelector': ipc(target, 'toggle')
                 else: ipc(target, 'close')
-            print('PASS dashboard, native shortcut help, wallpaper selector and notification panel IPC', flush=True)
+            for method, group in [('colors', 'interface'), ('barStyle', 'bar'), ('barLayout', 'bar')]:
+                ipc('desktop', method)
+                wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation')
+                time.sleep(1.5)
+                ipc('settings', 'close')
+            print('PASS dashboard, targeted color/bar settings, native shortcut help, wallpaper and notifications IPC', flush=True)
             stop()
             process = start()
             wait(lambda s: s['tasks'] == 25, 'restart persistence')

@@ -137,13 +137,13 @@ def build(destination):
             icon: "palette"
             StyledText { text: "Choose a wallpaper to update desktop and application colors."; wrapMode: Text.Wrap; Layout.fillWidth: true }
             RippleButtonWithIcon {
-                buttonText: "Choose wallpaper"
-                iconName: "wallpaper"
+                mainText: "Choose wallpaper"
+                materialIcon: "wallpaper"
                 onClicked: { GlobalStates.settingsOpen = false; GlobalStates.wallpaperSelectorOpen = true; }
             }
             RippleButtonWithIcon {
-                buttonText: "Regenerate wallpaper colors"
-                iconName: "refresh"
+                mainText: "Regenerate wallpaper colors"
+                materialIcon: "refresh"
                 onClicked: SystemTheming.regenerateColors()
             }
         }'''
