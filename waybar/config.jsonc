@@ -12,7 +12,7 @@
   "modules-center": ["clock"],
   "modules-right": ["tray", "pulseaudio", "network", "battery"],
   "custom/launcher": {
-    "format": "󰣛",
+    "format": "󰣇",
     "tooltip-format": "Applications",
     "on-click": "rofi -show drun"
   },
