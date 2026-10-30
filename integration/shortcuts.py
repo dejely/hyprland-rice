@@ -39,4 +39,11 @@ def keybind_tree(bindings):
 
 
 if __name__ == '__main__':
-    print(json.dumps(keybind_tree(effective())))
+    import sys
+    tree = keybind_tree(effective())
+    if '--yad' in sys.argv:
+        rows = []
+        for binding in tree['keybinds']:
+            rows.extend([' + '.join(binding['mods'] + [binding['key']]), binding['comment']])
+        raise SystemExit(subprocess.call(['yad', '--list', '--title=Effective desktop shortcuts', '--width=900', '--height=700', '--column=Shortcut', '--column=Action', *rows]))
+    print(json.dumps(tree))
