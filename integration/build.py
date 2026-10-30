@@ -194,6 +194,10 @@ def build(destination):
                         }
                         Component {
                             id: styleComponent''')
+    dashboard_settings = destination / 'modules/ii/settings/DashboardSettingsPage.qml'
+    text = dashboard_settings.read_text()
+    text = re.sub(r'^.*id: "hero:(?:schemes|palette)".*\n', '', text, flags=re.MULTILINE)
+    dashboard_settings.write_text(text)
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
