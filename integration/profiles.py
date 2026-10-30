@@ -165,7 +165,7 @@ def install_end4():
         change(main, main.read_text() + '\n# end4 profile: display overrides follow the original monitor configuration\nsource = $HOME/.config/hyprland-rice/end4/monitors.conf\n')
         rules = CONFIG / 'hypr/UserConfigs/WindowRules.conf'  
         content = rules.read_text() if rules.exists() else ''
-        content += '\n# end4 profile\nlayerrule = match:namespace ^quickshell:.*, blur on\nlayerrule = match:namespace ^quickshell:.*, ignore_alpha 0.2\n'
+        content += '\n# end4 profile\nlayerrule = match:namespace ^quickshell:.*, blur on\nlayerrule = match:namespace ^quickshell:.*, ignore_alpha 0.2\nwindowrule = match:title ^Desktop Settings$, float on\nwindowrule = match:title ^Desktop Settings$, center on\n'
         change(rules, content)
         set_profile('end4')
     except Exception:

@@ -202,6 +202,7 @@ def build(destination):
     replace('modules/common/models/hyprland/MonitorConfigOption.qml', 'Quickshell.shellPath("scripts/hyprland/monitor_configurator.py")', 'Quickshell.shellPath("integration/monitor_config.py")')
     replace('modules/common/models/hyprland/MonitorConfigOption.qml', '`${Directories.config}/hypr/monitors.lua`', '`${Directories.shellConfig}/monitors.conf`')
     replace('modules/ii/settings/pages/HyprlandConfig.qml', 'Animation presets require a require line in your hyprland.lua. Add the following line to enable presets:', 'Animation presets open the installed JaKooLit animation menu.')
+    replace('modules/ii/settings/Dashboard.qml', 'title: "hyprland-rice/end4 Settings"', 'title: "Desktop Settings"')
     # Existing Hyprland dispatch syntax (the pinned fork targets Lua Hyprland).
     import re
     for path in destination.rglob('*.qml'):
