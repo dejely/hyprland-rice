@@ -1,6 +1,6 @@
 --- a/RiceBridge.qml
 +++ b/RiceBridge.qml
-@@ -1,16 +1,34 @@
+@@ -1,25 +1,50 @@
  import QtQuick
 +import Rice.Native 1.0
  import Quickshell
@@ -36,6 +36,23 @@
  
      IpcHandler {
          target: "desktop"
+         function status(): string {
+             return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
+                 completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
+-                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
++                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen, wallpaperSelector: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen})
+         }
+         function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
++        function closePanels(): void {
++            GlobalStates.overviewOpen = false;
++            GlobalStates.settingsOpen = false;
++            GlobalStates.wallpaperSelectorOpen = false;
++            GlobalStates.sidebarRightOpen = false;
++            GlobalStates.mediaControlsOpen = false;
++        }
+         function refreshTasks(): void { Todo.refresh(); }
+         function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+         function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
 --- a/modules/common/Config.qml
 +++ b/modules/common/Config.qml
 @@ -10,7 +10,7 @@
@@ -469,15 +486,16 @@
 +}
 --- a/modules/ii/overview/Overview.qml
 +++ b/modules/ii/overview/Overview.qml
-@@ -14,154 +14,19 @@
+@@ -14,154 +14,20 @@
  Scope {
      id: overviewScope
      property bool dontAutoCancelSearch: false
 +    property string pendingSearch: ""
++    Connections { target: GlobalStates; function onOverviewOpenChanged() { if (!GlobalStates.overviewOpen) { overviewScope.dontAutoCancelSearch = false; overviewScope.pendingSearch = ""; LauncherSearch.query = ""; } } }
 +    function setQuery(query) {
-+        pendingSearch = query;
++        overviewScope.dontAutoCancelSearch = true; pendingSearch = query;
 +        GlobalStates.overviewOpen = true;
-+        if (panelWindow) panelWindow.setSearchingText(query);
++        if (panelWindow) { panelWindow.setSearchingText(query); pendingSearch = ""; }
 +    }
  
 -    PanelWindow {
@@ -631,12 +649,12 @@
 +    Loader {
 +        id: overviewPanel
 +        active: GlobalStates.overviewOpen
-+        source: Qt.resolvedUrl("OverviewWindow.qml")
-+        onLoaded: { item.overviewScope = overviewScope; if (overviewScope.pendingSearch) item.setSearchingText(overviewScope.pendingSearch); }
++        source: active ? Qt.resolvedUrl("RiceOverviewPanel.qml") : ""
++        onLoaded: { item.overviewScope = overviewScope; item.setSearchingText(overviewScope.pendingSearch || ""); overviewScope.pendingSearch = ""; }
      }
  
      function toggleClipboard() {
-@@ -170,7 +35,7 @@
+@@ -170,7 +36,7 @@
              return;
          }
          overviewScope.dontAutoCancelSearch = true;
@@ -645,7 +663,7 @@
          GlobalStates.overviewOpen = true;
      }
  
-@@ -180,7 +45,7 @@
+@@ -180,7 +46,7 @@
              return;
          }
          overviewScope.dontAutoCancelSearch = true;
@@ -654,7 +672,7 @@
          GlobalStates.overviewOpen = true;
      }
  
-@@ -190,7 +55,7 @@
+@@ -190,7 +56,7 @@
              return;
          }
          overviewScope.dontAutoCancelSearch = true;
@@ -663,7 +681,7 @@
          GlobalStates.overviewOpen = true;
      }
  
-@@ -212,7 +77,7 @@
+@@ -212,7 +78,7 @@
          function toggleReleaseInterrupt() {
              GlobalStates.superReleaseMightTrigger = false;
          }
@@ -672,72 +690,37 @@
          function emojiToggle() { overviewScope.toggleEmojis(); }
          function clipboardToggle() {
              overviewScope.toggleClipboard();
---- a/modules/ii/overview/OverviewWindow.qml
-+++ b/modules/ii/overview/OverviewWindow.qml
-@@ -1,176 +1,164 @@
--pragma ComponentBehavior: Bound
- import qs
- import qs.services
- import qs.modules.common
--import qs.modules.common.functions
--import Qt5Compat.GraphicalEffects
+--- /dev/null
++++ b/modules/ii/overview/RiceOverviewPanel.qml
+@@ -0,0 +1,175 @@
++import qs
++import qs.services
++import qs.modules.common
 +import qs.modules.common.widgets
 +import Qt.labs.synchronizer
- import QtQuick
++import QtQuick
 +import QtQuick.Controls
- import QtQuick.Layouts
- import Quickshell
++import QtQuick.Layouts
++import Quickshell
 +import Quickshell.Io
- import Quickshell.Wayland
++import Quickshell.Wayland
 +import Quickshell.Hyprland
- 
--Item { // Window
--    id: root
--    property var toplevel
--    property var windowAddresses: HyprlandData.addresses
--    property var windowByAddress: HyprlandData.windowByAddress
--    property var windowData
--    property var monitorData
--    property var scale
--    property bool restrictToWorkspace: true
--    property real widthRatio: {
--        const widgetWidth = widgetMonitor.transform & 1 ? widgetMonitor.height : widgetMonitor.width;
--        const monitorWidth = monitorData.transform & 1 ? monitorData.height : monitorData.width;
--        return (widgetWidth * monitorData.scale) / (monitorWidth * widgetMonitor.scale);
--    }
--    property real heightRatio: {
--        const widgetHeight = widgetMonitor.transform & 1 ? widgetMonitor.width : widgetMonitor.height;
--        const monitorHeight = monitorData.transform & 1 ? monitorData.width : monitorData.height;
--        return (widgetHeight * monitorData.scale) / (monitorHeight * widgetMonitor.scale);
--    }
--    property real initX: {
--        if (singleTiled) return xOffset;
--        return (windowData?.at[0] - (monitorData?.x ?? 0) - monitorData?.reserved[0]) * widthRatio * root.scale + xOffset;
--    }
--
--    property real initY: {
--        if (singleTiled) return yOffset;
--        return Math.max((windowData?.at[1] - (monitorData?.y ?? 0) - monitorData?.reserved[1]) * heightRatio * root.scale, 0) + yOffset;
--    }
--    property real xOffset: 0
--    property real yOffset: 0
--    property var widgetMonitor
--    property int widgetMonitorId: widgetMonitor.id
--    property real workspaceWidth: 0
--    property real workspaceHeight: 0
--
--    property real tiledCount: {
--        if (!windowData || windowData.floating || windowData.fullscreen) return 0;
--        const wsId = windowData.workspace?.id;
--        if (!wsId) return 0;
--        let count = 0;
--        for (const addr of root.windowAddresses) {
--            const w = root.windowByAddress[addr];
--            if (w && w.workspace?.id === wsId && !w.floating && !w.fullscreen) count++;
++
 +PanelWindow {
 +        id: overviewWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
 +        property var overviewScope
-+        Component.onCompleted: GlobalFocusGrab.addDismissable(overviewWindow)
++        property bool grabAfterFrame: true
++        Connections {
++            target: overviewWindow.contentItem.Window.window
++            function onFrameSwapped() {
++                if (overviewWindow.grabAfterFrame && GlobalStates.overviewOpen) {
++                    overviewWindow.grabAfterFrame = false;
++                    GlobalFocusGrab.addDismissable(overviewWindow);
++                }
++            }
++        }
++        Component.onCompleted: overviewWindow.grabAfterFrame = true
 +        Component.onDestruction: GlobalFocusGrab.removeDismissable(overviewWindow)
 +        property string searchingText: ""
 +        readonly property HyprlandMonitor monitor: Hyprland.monitorFor(overviewWindow.screen)
@@ -765,57 +748,8 @@
 +            Region {
 +                item: searchWidget.clipboardPopover.visible ? searchWidget.clipboardPopover : null
 +            }
-         }
--        return count;
--    }
--    property bool singleTiled: tiledCount === 1
- 
--    property var targetWindowWidth: {
--        if (singleTiled && root.workspaceWidth > 0) {
--            return root.workspaceWidth;
--        }
--        return windowData?.size[0] * scale * widthRatio;
--    }
--    property var targetWindowHeight: {
--        if (singleTiled && root.workspaceHeight > 0) {
--            return root.workspaceHeight;
--        }
--        return windowData?.size[1] * scale * heightRatio;
--    }
--    property bool hovered: false
--    property bool pressed: false
--    property bool dragging: false
--
--    property bool centerIcons: Config.options.overview.centerIcons
--    property real iconGapRatio: 0.06
--    property real iconToWindowRatio: centerIcons ? 0.35 : 0.15
--    property real xwaylandIndicatorToIconRatio: 0.35
--    property real iconToWindowRatioCompact: 0.6
--    property string iconPath: SystemAppearance.iconPath(AppSearch.guessIcon(windowData?.class), "image-missing")
--    property bool compactMode: Appearance.font.pixelSize.smaller * 4 > targetWindowHeight || Appearance.font.pixelSize.smaller * 4 > targetWindowWidth
--
--    property bool indicateXWayland: windowData?.xwayland ?? false
--
--    x: initX
--    y: initY
--    width: targetWindowWidth
--    height: targetWindowHeight
--    opacity: windowData.monitor == widgetMonitorId ? 1 : 0.4
--
--    property real topLeftRadius
--    property real topRightRadius
--    property real bottomLeftRadius
--    property real bottomRightRadius
--
--    layer.enabled: true
--    layer.effect: OpacityMask {
--        maskSource: Rectangle {
--            width: root.width
--            height: root.height
--            topLeftRadius: root.topLeftRadius
--            topRightRadius: root.topRightRadius
--            bottomRightRadius: root.bottomRightRadius
--            bottomLeftRadius: root.bottomLeftRadius
++        }
++
 +        anchors {
 +            top: true
 +            bottom: true
@@ -834,26 +768,11 @@
 +                    if (!overviewScope.dontAutoCancelSearch) {
 +                        searchWidget.cancelSearch();
 +                    }
-+                    GlobalFocusGrab.addDismissable(overviewWindow);
++                    overviewWindow.grabAfterFrame = true;
 +                }
 +            }
-         }
--    }
- 
--    Behavior on x {
--        enabled: !window.Drag.active && !window.dragging
--        animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
--    }
--    Behavior on y {
--        enabled: !window.Drag.active && !window.dragging
--        animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
--    }
--    Behavior on width {
--        animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
--    }
--    Behavior on height {
--        animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
--    }
++        }
++
 +        Connections {
 +            target: GlobalFocusGrab
 +            function onDismissed() {
@@ -862,36 +781,17 @@
 +        }
 +        implicitWidth: columnLayout.implicitWidth
 +        implicitHeight: columnLayout.implicitHeight
- 
--    ScreencopyView {
--        id: windowPreview
--        anchors.fill: parent
--        captureSource: GlobalStates.overviewOpen ? root.toplevel : null
--        live: true
++
 +        function setSearchingText(text) {
 +            searchWidget.setSearchingText(text);
 +            searchWidget.focusFirstItem();
 +        }
- 
--        // Color overlay for interactions
--        Rectangle {
++
 +        Item {
 +            id: fullscreenMask
-             anchors.fill: parent
--            topLeftRadius: root.topLeftRadius
--            topRightRadius: root.topRightRadius
--            bottomRightRadius: root.bottomRightRadius
--            bottomLeftRadius: root.bottomLeftRadius
--            color: pressed ? ColorUtils.transparentize(Appearance.colors.colLayer2Active, 0.5) : 
--                hovered ? ColorUtils.transparentize(Appearance.colors.colLayer2Hover, 0.7) : 
--                ColorUtils.transparentize(Appearance.colors.colLayer2)
--            border.color : ColorUtils.transparentize(Appearance.m3colors.m3outline, 0.88)
--            border.width : 1
-         }
- 
--        Image {
--            id: windowIcon
--            property real baseSize: Math.min(root.targetWindowWidth, root.targetWindowHeight)
++            anchors.fill: parent
++        }
++
 +        // Unscaled stand-in for columnLayout. Region ignores the open-animation scale,
 +        // so masking columnLayout directly leaves its outer edges unclickable.
 +        Item {
@@ -908,26 +808,7 @@
 +            opacity: GlobalStates.overviewOpen ? 1 : 0
 +            scale: GlobalStates.overviewOpen ? 1 : 0.85
 +            transformOrigin: Item.Top
-             anchors {
--                top: root.centerIcons ? undefined : parent.top
--                left: root.centerIcons ? undefined : parent.left
--                centerIn: root.centerIcons ? parent : undefined
--                margins: baseSize * root.iconGapRatio
--            }
--            property var iconSize: {
--                // console.log("-=-=-", root.toplevel.title, "-=-=-")
--                // console.log("Target window size:", targetWindowWidth, targetWindowHeight)
--                // console.log("Icon ratio:", root.compactMode ? root.iconToWindowRatioCompact : root.iconToWindowRatio)
--                // console.log("Scale:", root.monitorData.scale)
--                // console.log("Final:", Math.min(targetWindowWidth, targetWindowHeight) * (root.compactMode ? root.iconToWindowRatioCompact : root.iconToWindowRatio) / root.monitorData.scale)
--                return baseSize * (root.compactMode ? root.iconToWindowRatioCompact : root.iconToWindowRatio);
--            }
--            // mipmap: true
--            Layout.alignment: Qt.AlignHCenter
--            source: root.iconPath
--            width: iconSize
--            height: iconSize
--            sourceSize: Qt.size(iconSize, iconSize)
++            anchors {
 +                horizontalCenter: parent.horizontalCenter
 +                top: parent.top
 +                topMargin: overviewWindow.barOverlapActive
@@ -935,14 +816,10 @@
 +                    : 0
 +            }
 +            spacing: -8
- 
--            Behavior on width {
--                animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
++
 +            Behavior on opacity {
 +                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
-             }
--            Behavior on height {
--                animation: Appearance.animation.elementMoveEnter.numberAnimation.createObject(this)
++            }
 +            Behavior on scale {
 +                NumberAnimation { duration: 400; easing.type: Easing.BezierSpline; easing.bezierCurve: Appearance.animationCurves.expressiveDefaultSpatial }
 +            }
@@ -988,11 +865,9 @@
 +                        visible: (overviewWindow.searchingText == "")
 +                    }
 +                }
-             }
-         }
-     }
--}
-\ No newline at end of file
++            }
++        }
++    }
 --- a/modules/ii/settings/Dashboard.qml
 +++ b/modules/ii/settings/Dashboard.qml
 @@ -8,47 +8,11 @@
@@ -1042,9 +917,60 @@
 -                sourceComponent: DashboardContent {}
 -            }
 -        }
-+        source: Qt.resolvedUrl("DashboardWindow.qml")
++        source: active ? Qt.resolvedUrl("DashboardWindow.qml") : ""
      }
  }
+--- a/modules/ii/settings/DashboardBarWidgets.qml
++++ b/modules/ii/settings/DashboardBarWidgets.qml
+@@ -5,30 +5,20 @@
+     readonly property var multipleAllowed: ["visualizer", "divisor"]
+ 
+     readonly property var all: [
+-        { id: "leftSidebarButton", name: Translation.tr("Left Sidebar Button"), icon: "left_panel_open" },
+         { id: "workspaces", name: Translation.tr("Workspaces"), icon: "steppers" },
+         { id: "weatherBar", name: Translation.tr("Weather"), icon: "flare" },
+-        { id: "liveWallpaper", name: Translation.tr("Live wallpaper"), icon: "play_pause" },
+         { id: "media", name: Translation.tr("Media"), icon: "music_note" },
+         { id: "resources", name: Translation.tr("Resources"), icon: "empty_dashboard" },
+         { id: "systemIcons", name: Translation.tr("System Icons"), icon: "info" },
+         { id: "networkSpeed", name: Translation.tr("Network Speed"), icon: "network_check" },
+         { id: "clockWidget", name: Translation.tr("Clock"), icon: "schedule" },
+-        { id: "utilButtons", name: Translation.tr("Util Buttons"), icon: "toggle_on" },
+         { id: "sysTray", name: Translation.tr("Tray"), icon: "inbox" },
+         { id: "batteryIndicator", name: Translation.tr("Battery"), icon: "battery_android_frame_full" },
+         { id: "bluetooth", name: Translation.tr("Bluetooth"), icon: "bluetooth" },
+         { id: "activeWindow", name: Translation.tr("Active Window"), icon: "subtitles" },
+-        { id: "powerButton", name: Translation.tr("Power Button"), icon: "power_settings_new" },
+-        { id: "updatesCount", name: Translation.tr("Updates"), icon: "deployed_code_update" },
+-        { id: "docktoPanel", name: Translation.tr("Dock to Panel"), icon: "apps" },
+-        { id: "visualizer", name: Translation.tr("Visualizer"), icon: "graphic_eq" },
+         { id: "hyprlandXkbIndicator", name: Translation.tr("Keyboard Layout"), icon: "keyboard" },
+         { id: "divisor", name: Translation.tr("Divider"), icon: "horizontal_distribute" },
+         { id: "launcherButton", name: Translation.tr("Launcher Button"), icon: "search" },
+-        { id: "dynamicIsland", name: Translation.tr("Dynamic Island"), icon: "nest_wifi_pro" },
+-        { id: "aiUsage", name: Translation.tr("AI Usage"), icon: "neurology" },
+-        { id: "avatar", name: Translation.tr("Avatar"), icon: "account_circle" }
+     ]
+ 
+     function byId(id) {
+--- a/modules/ii/settings/DashboardSettingsCatalog.qml
++++ b/modules/ii/settings/DashboardSettingsCatalog.qml
+@@ -210,7 +210,6 @@
+         "services:City name": { type: "text", get: () => Config.options.bar.weather.city, set: v => { Config.options.bar.weather.city = v; } },
+         "general:Icon theme": { type: "select", get: () => Config.options.appearance.icons.theme, set: v => { Config.options.appearance.icons.theme = v; SystemAppearance.applyIconScheme(); }, get options() { return SystemAppearance.toOptions(SystemAppearance.iconThemes); } },
+         "general:Follow icon color scheme": { type: "toggle", get: () => Config.options.appearance.icons.followScheme, set: v => { Config.options.appearance.icons.followScheme = v; SystemAppearance.applyIconScheme(); } },
+-        "general:Dynamic icon accent colors": { type: "toggle", get: () => Config.options.appearance.icons.dynamicColor, set: v => { Config.options.appearance.icons.dynamicColor = v; SystemAppearance.applyIconScheme(); } },
+         "general:Prevent Breeze icon override": { type: "toggle", get: () => Config.options.appearance.icons.preventBreezeOverride, set: v => { Config.options.appearance.icons.preventBreezeOverride = v; SystemAppearance.applyIconScheme(); } },
+         "general:Cursor theme": { type: "select", get: () => SystemAppearance.cursorTheme, set: v => SystemAppearance.setCursor(v, SystemAppearance.cursorSize), get options() { return SystemAppearance.toOptions(SystemAppearance.cursorThemes); } },
+         "general:System font": { type: "select", get: () => SystemAppearance.fontFamily, set: v => SystemAppearance.setFont("ui", v, SystemAppearance.fontSize), get options() { return SystemAppearance.toOptions(SystemAppearance.fonts); } },
+@@ -607,7 +606,6 @@
+             page: Translation.tr("General"), title: Translation.tr("System Appearance"), icon: "palette", cards: [
+                 { type: "combo", key: "general:Icon theme", title: Translation.tr("Icon theme"), icon: "category", kw: "icons" },
+                 { type: "toggle", key: "general:Follow icon color scheme", title: Translation.tr("Follow color scheme"), icon: "brightness_6", kw: "icons light dark scheme" },
+-                { type: "toggle", key: "general:Dynamic icon accent colors", title: Translation.tr("Dynamic accent colors"), icon: "palette", kw: "icons material you recolor" },
+                 { type: "toggle", key: "general:Prevent Breeze icon override", title: Translation.tr("Prevent Breeze override"), icon: "shield", kw: "icons kde breeze kmyc" },
+                 { type: "combo", key: "general:Cursor theme", title: Translation.tr("Cursor theme"), icon: "mouse" },
+                 { type: "combo", key: "general:System font", title: Translation.tr("System font"), icon: "text_fields", kw: "typography" },
 --- a/modules/ii/settings/DashboardStyleCard.qml
 +++ b/modules/ii/settings/DashboardStyleCard.qml
 @@ -9,8 +9,6 @@
@@ -1058,7 +984,7 @@
  
 --- /dev/null
 +++ b/modules/ii/settings/DashboardWindow.qml
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,54 @@
 +import QtQuick
 +import QtQuick.Layouts
 +import Quickshell
@@ -1068,6 +994,7 @@
 +
 +FloatingWindow {
 +            id: window
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
 +            title: "Desktop Settings"
 +            color: Appearance.colors.colUiBackground
 +
@@ -1081,10 +1008,19 @@
 +            minimumSize: Qt.size(900, 600)
 +
 +            property bool settled: false
++            property bool riceWasVisible: false
++            property bool riceClosingFromState: false
++            Connections {
++                target: GlobalStates
++                function onSettingsOpenChanged() {
++                    if (!GlobalStates.settingsOpen) window.riceClosingFromState = true;
++                }
++            }
 +
 +            visible: true
 +            onVisibleChanged: {
-+                if (!visible) GlobalStates.settingsOpen = false;
++                if (visible) riceWasVisible = true;
++                else if (riceWasVisible && !riceClosingFromState) GlobalStates.settingsOpen = false;
 +            }
 +            onWidthChanged: settleTimer.restart()
 +            onHeightChanged: settleTimer.restart()
@@ -1288,6 +1224,49 @@
                          anchors.fill: parent
                          source: Qt.resolvedUrl("pages/Profile.qml")
  
+--- a/modules/ii/settings/pages/BarConfig.qml
++++ b/modules/ii/settings/pages/BarConfig.qml
+@@ -17,30 +17,20 @@
+     }
+ 
+     property var allWidgets: [
+-        { id: "leftSidebarButton", name: Translation.tr("Left Sidebar Button"),  icon: "left_panel_open" },
+         { id: "workspaces",        name: Translation.tr("Workspaces"),           icon: "steppers" },
+         { id: "weatherBar",        name: Translation.tr("Weather"),              icon: "flare" },
+-        { id: "liveWallpaper",     name: Translation.tr("Live wallpaper"),        icon: "play_pause" },
+         { id: "media",             name: Translation.tr("Media"),                icon: "music_note" },
+         { id: "resources",         name: Translation.tr("Resources"),            icon: "empty_dashboard" },
+         { id: "systemIcons",       name: Translation.tr("System Icons"),         icon: "info" },
+         { id: "networkSpeed",      name: Translation.tr("Network Speed"),        icon: "network_check" },
+         { id: "clockWidget",       name: Translation.tr("Clock"),                icon: "schedule" },
+-        { id: "utilButtons",       name: Translation.tr("Util Buttons"),         icon: "toggle_on" },
+         { id: "sysTray",           name: Translation.tr("Tray"),                 icon: "inbox" },
+         { id: "batteryIndicator",  name: Translation.tr("Battery"),              icon: "battery_android_frame_full" },
+         { id: "bluetooth",         name: Translation.tr("Bluetooth"),            icon: "bluetooth" },
+         { id: "activeWindow",      name: Translation.tr("Active Window"),        icon: "subtitles" },
+-        { id: "powerButton",       name: Translation.tr("Power Button"),         icon: "power_settings_new" },
+-        { id: "updatesCount",      name: Translation.tr("Updates"),              icon: "deployed_code_update" },
+-        { id: "docktoPanel",       name: Translation.tr("Dock to Panel"),        icon: "apps" },
+-        { id: "visualizer",        name: Translation.tr("Visualizer"),           icon: "graphic_eq" },
+         { id: "hyprlandXkbIndicator",   name: Translation.tr("Keyboard Layout"), icon: "keyboard" },
+         { id: "divisor",            name: Translation.tr("Divider"),             icon: "horizontal_distribute" },
+         { id: "launcherButton",     name: Translation.tr("Launcher Button"),     icon: "search" },
+-        { id: "dynamicIsland",     name: Translation.tr("Dynamic Island"),     icon: "nest_wifi_pro" },
+-        { id: "aiUsage",           name: Translation.tr("AI Usage"),           icon: "neurology" },
+-        { id: "avatar",            name: Translation.tr("Avatar"),             icon: "account_circle" },
+     ]
+ 
+     function availableFor(section) {
+--- a/modules/ii/settings/pages/HyprlandConfig.qml
++++ b/modules/ii/settings/pages/HyprlandConfig.qml
+@@ -1164,7 +1164,6 @@
+                     onSelected: newValue => {
+                         Config.options.hyprland.animations.animation = newValue
+                         saveAnimProc.command = [
+-                            "python3",
+                             HyprlandConfig.configuratorScriptPath,
+                             "--anim-preset", newValue
+                         ]
 --- a/modules/ii/settings/pages/InterfaceConfig.qml
 +++ b/modules/ii/settings/pages/InterfaceConfig.qml
 @@ -87,8 +87,6 @@
@@ -1301,7 +1280,15 @@
                  }
 --- a/modules/ii/sidebarRight/SidebarRight.qml
 +++ b/modules/ii/sidebarRight/SidebarRight.qml
-@@ -161,7 +161,7 @@
+@@ -17,6 +17,7 @@
+ 
+     PanelWindow {
+         id: panelWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
+ 
+         readonly property bool animatedEntrance: WM.compositor !== "hyprland"
+         property bool reallyVisible: false
+@@ -161,7 +162,7 @@
  
                  Loader {
                      id: sidebarContentLoader
@@ -1310,6 +1297,15 @@
                      anchors {
                          fill: parent
                          margins: Appearance.sizes.hyprlandGapsOut
+@@ -177,7 +178,7 @@
+                         }
+                     }
+ 
+-                    sourceComponent: SidebarRightContent {}
++                    source: active ? Qt.resolvedUrl("SidebarRightContent.qml") : ""
+                 }
+             }
+         }
 --- a/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml
 +++ b/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml
 @@ -77,7 +77,7 @@
@@ -1321,6 +1317,95 @@
                          sourcePath: (fileModelData && fileModelData.filePath) ? fileModelData.filePath : ""
                          cache: false
                          fillMode: Image.PreserveAspectCrop
+--- a/modules/ii/wallpaperSelector/WallpaperSelector.qml
++++ b/modules/ii/wallpaperSelector/WallpaperSelector.qml
+@@ -37,85 +37,7 @@
+         id: wallpaperSelectorLoader
+         active: root.reallyOpen
+ 
+-        sourceComponent: PanelWindow {
+-            id: panelWindow
+-            readonly property var monitor: WM.monitorFor(panelWindow.screen)
+-            property bool monitorIsFocused: WM.compositor === "hyprland"
+-                ? (Hyprland.focusedMonitor?.name == monitor?.name)
+-                : (WM.focusedMonitor?.name == monitor?.name)
+-
+-            exclusionMode: ExclusionMode.Ignore
+-            WlrLayershell.namespace: "quickshell:wallpaperSelector"
+-            WlrLayershell.layer: WlrLayer.Overlay
+-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+-            color: "transparent"
+-
+-            anchors.top: true
+-            margins {
+-                top: Config?.options.bar.vertical ? Appearance.sizes.hyprlandGapsOut : Appearance.sizes.barHeight + Appearance.sizes.hyprlandGapsOut
+-            }
+-
+-            mask: Region {
+-                item: content
+-            }
+-
+-            implicitHeight: Appearance.sizes.wallpaperSelectorHeight
+-            implicitWidth: Appearance.sizes.wallpaperSelectorWidth
+-
+-            Component.onCompleted: {
+-                GlobalFocusGrab.addDismissable(panelWindow);
+-                content.slideIn();
+-            }
+-            Component.onDestruction: {
+-                GlobalFocusGrab.removeDismissable(panelWindow);
+-            }
+-            Connections {
+-                target: GlobalFocusGrab
+-                function onDismissed() {
+-                    GlobalStates.wallpaperSelectorOpen = false;
+-                }
+-            }
+-
+-            WallpaperSelectorContent {
+-                id: content
+-                width: parent.width
+-                height: parent.height
+-                x: 0
+-                y: 0
+-
+-                function slideIn() {
+-                    content.y = -content.height;
+-                    if (WM.compositor === "niri") {
+-                        Qt.callLater(() => { Qt.callLater(() => { content.y = 0; }); });
+-                    } else {
+-                        Qt.callLater(() => { content.y = 0; });
+-                    }
+-                }
+-
+-                Connections {
+-                    target: GlobalStates
+-                    function onWallpaperSelectorOpenChanged() {
+-                        if (!GlobalStates.wallpaperSelectorOpen) {
+-                            content.y = -content.height;
+-                        }
+-                    }
+-                }
+-
+-                Behavior on y {
+-                    NumberAnimation {
+-                        duration: WM.compositor === "niri"
+-                            ? Appearance.animation.sidebarSlideEnter.duration
+-                            : Appearance.animation.sidebarSlideExit.duration
+-                        easing.type: GlobalStates.wallpaperSelectorOpen
+-                            ? Appearance.animation.sidebarSlideEnter.type
+-                            : Appearance.animation.sidebarSlideExit.type
+-                        easing.bezierCurve: GlobalStates.wallpaperSelectorOpen
+-                            ? Appearance.animation.sidebarSlideEnter.bezierCurve
+-                            : Appearance.animation.sidebarSlideExit.bezierCurve
+-                    }
+-                }
+-            }
+-        }
++        source: active ? Qt.resolvedUrl("WallpaperSelectorWindow.qml") : ""
+     }
+ 
+     function toggleWallpaperSelector() {
 --- a/modules/ii/wallpaperSelector/WallpaperSelectorContent.qml
 +++ b/modules/ii/wallpaperSelector/WallpaperSelectorContent.qml
 @@ -12,6 +12,8 @@
@@ -1355,6 +1440,101 @@
      }
  
      function handleFilePasting(event) {
+--- /dev/null
++++ b/modules/ii/wallpaperSelector/WallpaperSelectorWindow.qml
+@@ -0,0 +1,92 @@
++import qs
++import qs.services
++import qs.modules.common
++import qs.modules.common.widgets
++import qs.modules.common.functions
++import QtQuick
++import QtQuick.Controls
++import Quickshell
++import Quickshell.Io
++import Quickshell.Wayland
++import Quickshell.Hyprland
++
++PanelWindow {
++            id: panelWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
++            readonly property var monitor: WM.monitorFor(panelWindow.screen)
++            property bool monitorIsFocused: WM.compositor === "hyprland"
++                ? (Hyprland.focusedMonitor?.name == monitor?.name)
++                : (WM.focusedMonitor?.name == monitor?.name)
++
++            exclusionMode: ExclusionMode.Ignore
++            WlrLayershell.namespace: "quickshell:wallpaperSelector"
++            WlrLayershell.layer: WlrLayer.Overlay
++            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
++            color: "transparent"
++
++            anchors.top: true
++            margins {
++                top: Config?.options.bar.vertical ? Appearance.sizes.hyprlandGapsOut : Appearance.sizes.barHeight + Appearance.sizes.hyprlandGapsOut
++            }
++
++            mask: Region {
++                item: content
++            }
++
++            implicitHeight: Appearance.sizes.wallpaperSelectorHeight
++            implicitWidth: Appearance.sizes.wallpaperSelectorWidth
++
++            Component.onCompleted: {
++                GlobalFocusGrab.addDismissable(panelWindow);
++                content.slideIn();
++            }
++            Component.onDestruction: {
++                GlobalFocusGrab.removeDismissable(panelWindow);
++            }
++            Connections {
++                target: GlobalFocusGrab
++                function onDismissed() {
++                    GlobalStates.wallpaperSelectorOpen = false;
++                }
++            }
++
++            WallpaperSelectorContent {
++                id: content
++                width: parent.width
++                height: parent.height
++                x: 0
++                y: 0
++
++                function slideIn() {
++                    content.y = -content.height;
++                    if (WM.compositor === "niri") {
++                        Qt.callLater(() => { Qt.callLater(() => { content.y = 0; }); });
++                    } else {
++                        Qt.callLater(() => { content.y = 0; });
++                    }
++                }
++
++                Connections {
++                    target: GlobalStates
++                    function onWallpaperSelectorOpenChanged() {
++                        if (!GlobalStates.wallpaperSelectorOpen) {
++                            content.y = -content.height;
++                        }
++                    }
++                }
++
++                Behavior on y {
++                    NumberAnimation {
++                        duration: WM.compositor === "niri"
++                            ? Appearance.animation.sidebarSlideEnter.duration
++                            : Appearance.animation.sidebarSlideExit.duration
++                        easing.type: GlobalStates.wallpaperSelectorOpen
++                            ? Appearance.animation.sidebarSlideEnter.type
++                            : Appearance.animation.sidebarSlideExit.type
++                        easing.bezierCurve: GlobalStates.wallpaperSelectorOpen
++                            ? Appearance.animation.sidebarSlideEnter.bezierCurve
++                            : Appearance.animation.sidebarSlideExit.bezierCurve
++                    }
++                }
++            }
++        }
 --- a/panelFamilies/IllogicalImpulseFamily.qml
 +++ b/panelFamilies/IllogicalImpulseFamily.qml
 @@ -5,53 +5,26 @@
@@ -1445,7 +1625,39 @@
      readonly property var hidden: Array.from(Config.options.background.widgets.menuHidden)
 --- a/services/LyricsService.qml
 +++ b/services/LyricsService.qml
-@@ -174,5 +174,5 @@
+@@ -138,25 +138,12 @@
+     }
+ 
+     function restartLyrics() {
+-        lyricsProc.running = false
+-        boundaryTimer.stop()
+-        root.lyricsLines = []
+-        root.activeIndex = -1
+-        root.slots = ["", "", "", "", "", "", ""]
+-        root.status = "loading"
+-
+-        const title    = root.activePlayer?.trackTitle  ?? ""
+-        const artist   = root.activePlayer?.trackArtist ?? ""
+-        const duration = root.activePlayer?.length       ?? 0
+-
+-        if (!title || !artist) { root.status = "no_info"; return }
+-
+-        lyricsProc.command = [
+-            "python3",
+-            `${Directories.scriptPath}/lyrics/lyrics.py`,
+-            title, artist, String(Math.floor(duration))
+-        ]
+-        lyricsProc.running = true
++        lyricsProc.running = false;
++        boundaryTimer.stop();
++        root.lyricsLines = [];
++        root.activeIndex = -1;
++        root.slots = ["", "", "", "", "", "", ""];
++        root.status = "no_info";
+     }
+ 
+     Timer {
+@@ -174,5 +161,5 @@
          function onPlaybackStateChanged() { root.resync() }
      }
  
@@ -1464,6 +1676,36 @@
          }
      }
  
+--- a/services/SettingsQuickControls.qml
++++ b/services/SettingsQuickControls.qml
+@@ -506,7 +506,7 @@
+             () => root.hypr.animations.animation,
+             value => {
+                 root.hypr.animations.animation = value;
+-                Quickshell.execDetached(["python3", HyprlandConfig.configuratorScriptPath, "--anim-preset", value]);
++                Quickshell.execDetached([HyprlandConfig.configuratorScriptPath, "--anim-preset", value]);
+             },
+             [
+                 { displayName: Translation.tr("Elastic"),   icon: "move_selection_right", value: "fast"   },
+--- a/services/Wallpapers.qml
++++ b/services/Wallpapers.qml
+@@ -138,14 +138,14 @@
+             if (/^\/*$/.test(validateDirProc.nicePath)) validateDirProc.nicePath = "/";
+             validateDirProc.exec([
+                 "bash", "-c",
+-                `if [ -d "${validateDirProc.nicePath}" ]; then echo dir; elif [ -f "${validateDirProc.nicePath}" ]; then echo file; else echo invalid; fi`
++                'if [ -d "$1" ]; then echo dir; elif [ -f "$1" ]; then echo file; else echo invalid; fi', "_", validateDirProc.nicePath
+             ])
+         }
+         stdout: StdioCollector {
+             onStreamFinished: {
+-                    root.directory = Qt.resolvedUrl(validateDirProc.nicePath)
+                 const result = text.trim()
+                 if (result === "dir") {
++                    root.directory = Qt.resolvedUrl(validateDirProc.nicePath)
+                 } else if (result === "file") {
+                     root.directory = Qt.resolvedUrl(FileUtils.parentDirectory(validateDirProc.nicePath))
+                 } else {
 --- a/shell.qml
 +++ b/shell.qml
 @@ -47,10 +47,10 @@
