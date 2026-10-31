@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[1]
 BIN=ROOT/'rice-core/target/release/rice-core'
 class NativeCore(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.env=dict(os.environ,XDG_DATA_HOME=str(self.root/'data'),XDG_STATE_HOME=str(self.root/'state'),XDG_CONFIG_HOME=str(self.root/'config'))
+  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.env=dict(os.environ,XDG_DATA_HOME=str(self.root/'data'),XDG_STATE_HOME=str(self.root/'state'),XDG_CONFIG_HOME=str(self.root/'config'),XDG_CACHE_HOME=str(self.root/'cache'))
  def tearDown(self):self.tmp.cleanup()
  def call(self,*args,ok=True):
   r=subprocess.run([str(BIN),*args],env=self.env,capture_output=True,text=True)
@@ -32,6 +32,18 @@ class NativeCore(unittest.TestCase):
   p=self.root/'idle.conf';p.write_text('general {\n lock_cmd = custom-lock\n}\nlistener {\n timeout = 10\n on-timeout = custom-action\n}\nlistener {\n timeout = 30\n on-timeout = loginctl lock-session\n}\n');self.call('idle-config','--file',str(p),'--lock','60');s=p.read_text();self.assertIn('custom-lock',s);self.assertIn('custom-action',s);self.assertIn('timeout = 60',s);self.assertNotIn('timeout = 30',s)
  def test_monitor_validation(self):
   p=self.root/'monitors.conf';self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','scale','1.25');self.assertIn('1.25',p.read_text());before=p.read_bytes();self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','mode','bad\nvalue',ok=False);self.assertEqual(p.read_bytes(),before)
+ def test_thumbnail_generation_and_cache_limits(self):
+  import shutil
+  native=self.root/'native';native.mkdir();shutil.copy2(ROOT/'integration/thumbnail.sh',native/'thumbnail.sh');shutil.copy2(BIN,native/'rice-core')
+  source=self.root/"banana ' wallpaper.png";subprocess.run(['magick','-size','64x64','xc:red',str(source)],check=True)
+  cache=self.root/'cache/hyprland-rice/end4/thumbnails';thumb=cache/'normal'/('a'*32+'.png')
+  r=subprocess.run(['bash',str(native/'thumbnail.sh'),str(source),str(thumb),'128'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,1,r.stderr);self.assertTrue(thumb.is_file())
+  r=subprocess.run(['bash',str(native/'thumbnail.sh'),str(source),str(thumb),'128'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,0)
+  for i in range(520):(cache/f'{i:032x}.png').write_bytes(b'fixture')
+  self.call('cache-prune');self.assertLessEqual(len(list(cache.rglob('*.png'))),512);self.assertTrue(source.exists())
+ def test_thumbnail_prune_refuses_symlink(self):
+  outside=self.root/'personal';outside.mkdir();(outside/'keep.png').write_bytes(b'personal');cache=self.root/'cache/hyprland-rice';cache.mkdir(parents=True);(cache/'end4').mkdir();(cache/'end4/thumbnails').symlink_to(outside)
+  self.call('cache-prune',ok=False);self.assertEqual((outside/'keep.png').read_bytes(),b'personal')
  def test_profile_rollback_and_edit_guard(self):
   cfg=self.root/'config';(cfg/'hypr/UserConfigs').mkdir(parents=True);(cfg/'hypr/hyprland.conf').write_text('# original\n');(cfg/'quickshell').mkdir();(cfg/'quickshell/qml_color.json').write_text(json.dumps(dict(windowBackground='#10151c',primaryText='#eeeeee',secondaryText='#aaaaaa',accentPrimary='#aabbcc')));(cfg/'rofi').mkdir();(cfg/'rofi/.current_wallpaper').write_text('fixture')
   self.call('profile',str(ROOT),'install','--profile','end4-lite','--no-start');p=cfg/'hypr/hyprland.conf';installed=p.read_text();fake=self.root/'broken-checkout';(fake/'vendor/end4-pC').mkdir(parents=True);self.call('profile',str(fake),'install','--profile','end4-lite','--no-start',ok=False);self.assertEqual(p.read_text(),installed);p.write_text(installed+'# user edit\n');self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start',ok=False);self.assertIn('# user edit',p.read_text());p.write_text(installed);self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start');self.assertEqual(p.read_text(),'# original\n');self.assertFalse((cfg/'quickshell/rice-desktop').exists())

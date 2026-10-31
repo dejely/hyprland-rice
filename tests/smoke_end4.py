@@ -78,7 +78,10 @@ def run(output):
         data = json.loads((ROOT / 'integration/defaults.json').read_text())
         data['background']['wallpaperPath'] = str((Path.home() / '.config/rofi/.current_wallpaper').resolve())
         # Isolate the native file picker from the wallpaper library.
-        data['wallpaperSelector'] = {'userPath': str(root)}
+        gallery = root / 'gallery'
+        gallery.mkdir()
+        subprocess.run(['magick', '-size', '64x64', 'xc:red', str(gallery / "banana ' fixture.png")], check=True)
+        data['wallpaperSelector'] = {'userPath': str(gallery)}
         atomic_json(root / 'config/hyprland-rice/end4/config.json', data)
         palette = root / 'config/quickshell/qml_color.json'
         colors = dict(windowBackground='#10151c', primaryText='#eeeeee', secondaryText='#aaaaaa', accentPrimary='##aabbcc')
@@ -190,7 +193,13 @@ def run(output):
             for target, method in [('settings','open'), ('search','help'), ('wallpaperSelector','toggle'), ('sidebarRight','open')]:
                 ipc(target, method)
                 time.sleep(0.8)
-                if target == 'wallpaperSelector': ipc(target, 'toggle')
+                if target == 'wallpaperSelector':
+                    if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                        for _ in range(40):
+                            if list((root / 'cache/hyprland-rice/end4/thumbnails').rglob('*.png')): break
+                            time.sleep(.1)
+                        else: raise AssertionError('Visible wallpaper thumbnail was not generated')
+                    ipc(target, 'toggle')
                 else: ipc(target, 'close')
             for method, group in [('colors', 'Interface'), ('barStyle', 'Bar'), ('barLayout', 'Bar')]:
                 ipc('desktop', method)
