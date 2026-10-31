@@ -15,13 +15,17 @@ Scope {
     IpcHandler {
         target: "desktop"
         function status(): string {
-            return JSON.stringify({busy: Todo.busy, error: Todo.error, tasks: Todo.list.length,
+            return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
                 completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
-                settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
+                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
         }
         function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
         function refreshTasks(): void { Todo.refresh(); }
         function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+        function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
+        function barLayout(): void { GlobalStates.openSettingsAt("bar", "", "Bar layout", ""); }
+        function colors(): void { GlobalStates.openSettingsAt("interface", "", "Wallpaper colors", ""); }
+        function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
         function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
         function help(): void { GlobalStates.overviewOpen = true; }
     }

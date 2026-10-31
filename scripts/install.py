@@ -176,11 +176,21 @@ def uninstall(no_start):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['install', 'uninstall'])
+    parser.add_argument('--profile', choices=['end4', 'jakoolit'], help='Switch shell profile; preserves profile settings and tasks')
     parser.add_argument('--no-start', action='store_true', help='Only manage files; do not touch session processes')
     parser.add_argument('--restore-bar', action='store_true', help='Back up and replace bar links changed by a layout/style selector')
     args = parser.parse_args()
     try:
-        if args.action == 'install':
+        if args.profile or (STATE / 'end4-profile.json').exists():
+            import sys
+            sys.path.insert(0, str(REPO / 'integration'))
+            import profiles
+            if args.action == 'uninstall':
+                profiles.switch('jakoolit', args.no_start)
+                uninstall(args.no_start)
+            else:
+                profiles.switch(args.profile or 'end4', args.no_start)
+        elif args.action == 'install':
             install(args.no_start, args.restore_bar)
         else:
             uninstall(args.no_start)
