@@ -1,0 +1,146 @@
+{
+  "policies": {
+    "ai": 0,
+    "weeb": 0
+  },
+  "appearance": {
+    "fakeScreenRounding": 0,
+    "fonts": {
+      "main": "Noto Sans",
+      "numbers": "Noto Sans",
+      "title": "Noto Sans",
+      "iconNerd": "JetBrainsMono Nerd Font",
+      "monospace": "JetBrainsMono Nerd Font",
+      "reading": "Noto Sans",
+      "expressive": "Noto Sans"
+    },
+    "transparency": {
+      "enable": true,
+      "automatic": false,
+      "backgroundTransparency": 0.18,
+      "contentTransparency": 0.05
+    },
+    "wallpaperTheming": {
+      "enableAppsAndShell": false,
+      "enableQtApps": false,
+      "enableTerminal": false
+    }
+  },
+  "profile": {
+    "descriptionText": "Arch Linux",
+    "onlinePresets": false
+  },
+  "settings": {
+    "style": "dashboard"
+  },
+  "background": {
+    "showGrid": false,
+    "widgetsLocked": false,
+    "widgets": {
+      "clock": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 1450,
+        "y": 55,
+        "style": "digital",
+        "digital": {
+          "font": {
+            "family": "Noto Sans",
+            "size": 58
+          }
+        },
+        "color": "onLayer0"
+      },
+      "userCard": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 48,
+        "y": 48,
+        "sizeMode": "1x2"
+      },
+      "calendar": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 48,
+        "y": 200,
+        "sizeMode": "2x2"
+      },
+      "todo": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 48,
+        "y": 495
+      },
+      "media": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 1450,
+        "y": 300,
+        "sizeMode": "1x3"
+      },
+      "weather": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 1450,
+        "y": 465,
+        "sizeMode": "1x3"
+      },
+      "resources": {
+        "enable": true,
+        "placementStrategy": "free",
+        "x": 1450,
+        "y": 650,
+        "vertical": false
+      }
+    },
+    "wallpaperAnimation": ""
+  },
+  "bar": {
+    "bottom": true,
+    "cornerStyle": 1,
+    "topLeftIcon": "arch",
+    "verbose": false,
+    "layouts": {
+      "leftLayout": [],
+      "middleLayout": [
+        "launcherButton",
+        "workspaces",
+        "clockWidget",
+        "sysTray",
+        "systemIcons",
+        "batteryIndicator"
+      ],
+      "rightLayout": []
+    },
+    "weather": {
+      "enableGPS": false,
+      "city": ""
+    },
+    "aiUsage": {
+      "claudeEnabled": false,
+      "codexEnabled": false
+    }
+  },
+  "dock": {
+    "enable": false
+  },
+  "light": {
+    "night": {
+      "automatic": false
+    }
+  },
+  "updates": {
+    "enableCheck": false
+  },
+  "hyprland": {
+    "autostartApps": {
+      "enable": false
+    }
+  },
+  "lock": {
+    "launchOnStartup": false
+  },
+  "screenFrame": {
+    "enable": false
+  }
+}
