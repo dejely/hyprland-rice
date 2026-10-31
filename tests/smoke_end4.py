@@ -71,6 +71,9 @@ def run(output):
         bg = runtime / 'modules/ii/background/Background.qml'
         source = bg.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         bg.write_text(source.replace('        id: bgRoot', '        id: bgRoot\n' + HARNESS, 1))
+        overview = runtime / 'modules/ii/overview/Overview.qml'
+        source = overview.read_text().replace('target: "search"', 'target: "search"\n        function testQuery(): string { return LauncherSearch.query; }\n        function testReady(): bool { return !!panelWindow; }')
+        overview.write_text(source)
         dashboard = runtime / 'modules/ii/settings/DashboardSettingsPage.qml'
         source = dashboard.read_text().replace('import QtQuick\n', 'import QtQuick\nimport Quickshell.Io\n', 1)
         source = source.replace('    id: root', '    id: root\n    IpcHandler { target: "dashboard-test"; function cards(): int { return root.layoutResult.count; } }', 1)
@@ -89,11 +92,16 @@ def run(output):
         sync(palette, root / 'state/hyprland-rice/end4/user/generated/colors.json')
         tools = root / 'bin'
         tools.mkdir()
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            blocker = tools / 'python3'
+            blocker.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$RICE_PYTHON_LOG"\nexit 126\n')
+            blocker.chmod(0o755)
+            (tools / 'python').symlink_to(blocker)
         trace = tools / 'hyprctl'
         trace.write_text('#!/usr/bin/env bash\nif [[ \"${1:-}\" == reload ]]; then ps -p \"$PPID\" -o args= >> \"$RICE_COMMAND_LOG\"; fi\nprintf "%s\\n" "$*" >> "$RICE_COMMAND_LOG"\nexec /usr/bin/hyprctl "$@"\n')
         trace.chmod(0o755)
         deps = Path.home() / '.local/share/hyprland-rice/deps/usr/lib64'
-        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(runtime / 'native') + ':' + str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
+        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_PYTHON_LOG=str(root / 'python-invocations.log'), RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(runtime / 'native') + ':' + str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
                    XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_STATE_HOME=str(root / 'state'), XDG_CACHE_HOME=str(root / 'cache'), RICE_TEST_OUTPUT=output)
         if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
@@ -115,7 +123,7 @@ def run(output):
                     status = json.loads(ipc('desktop', 'status'))
                     if not status['busy'] and predicate(status): return status
                 except (ValueError, subprocess.CalledProcessError): pass
-            raise AssertionError(label + '\n' + (root / 'shell.log').read_text(errors='replace')[-16000:])
+            raise AssertionError(label + ' status=' + str(locals().get('status')) + '\n' + (root / 'shell.log').read_text(errors='replace')[-16000:])
 
         def ui(method, *args):
             time.sleep(0.25)
@@ -201,9 +209,19 @@ def run(output):
                         else: raise AssertionError('Visible wallpaper thumbnail was not generated')
                     ipc(target, 'toggle')
                 else: ipc(target, 'close')
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                ipc('search', 'help'); time.sleep(.5)
+                query = ipc('search', 'testQuery')
+                assert query == '<', (query, ipc('search', 'testReady'))
+                ipc('search', 'close'); time.sleep(.3)
+                ipc('search', 'open'); time.sleep(.5)
+                query = ipc('search', 'testQuery')
+                assert query == '', repr(query)
+                ipc('search', 'close'); time.sleep(.3)
+                print('PASS launcher reopens without stale help or clipboard query state', flush=True)
             for method, group in [('colors', 'Interface'), ('barStyle', 'Bar'), ('barLayout', 'Bar')]:
                 ipc('desktop', method)
-                wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation')
+                wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation ' + method)
                 time.sleep(1.5)
                 assert int(ipc('dashboard-test', 'cards')) > 0, (method, group, 'Empty settings group')
                 ipc('settings', 'close')
@@ -224,6 +242,7 @@ def run(output):
             log = (root / 'shell.log').read_text(errors='replace')
             errors = [line for line in log.splitlines() if 'Failed to load configuration' in line or 'ReferenceError:' in line or 'TypeError:' in line]
             assert not errors, '\n'.join(errors)
+            assert not (root / 'python-invocations.log').exists(), 'Native UI attempted to invoke Python: ' + (root / 'python-invocations.log').read_text() if (root / 'python-invocations.log').exists() else ''
         except Exception:
             subprocess.run(['grim', '-o', output, '/tmp/rice-end4-failed.png'], check=False)
             shutil.copy2(root / 'shell.log', '/tmp/rice-end4-failed.log')

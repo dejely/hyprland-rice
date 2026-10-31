@@ -52,14 +52,19 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
   for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]:
    for i in range(a.cycles):
-    ipc(target,method);time.sleep(.8);ipc(target,method);time.sleep(.4)
+    ipc(target,method);time.sleep(.8)
+    state=json.loads(ipc('desktop','status'));key={'search':'overview','settings':'settings','wallpaperSelector':'wallpaperSelector','sidebarRight':'notifications'}[target];assert state[key], (target,'did not stay open',state)
+    ipc('desktop','closePanels');time.sleep(.4)
+    state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications')), state
     if (i+1)%5==0:sample(target+':'+method+':'+str(i+1))
-   if a.cycles:sample(target+':'+method)
+   if a.cycles:
+    time.sleep(2.5);sample(target+':'+method+':closed')
   time.sleep(5);sample('settled')
   sp.run(['hyprctl','dispatch','focusmonitor',output],stdout=sp.DEVNULL);time.sleep(1)
   sp.run(['grim','-o',output,a.report+'.png'],check=True)
   Path(a.report+'.log').write_text((root/'shell.log').read_text(errors='replace'))
  finally:
+  if (root/'shell.log').exists():Path(a.report+'.log').write_text((root/'shell.log').read_text(errors='replace'))
   sp.run(['systemctl','--user','stop',unit],stdout=sp.DEVNULL,stderr=sp.DEVNULL)
   sp.run(['hyprctl','dispatch','focusmonitor',original],stdout=sp.DEVNULL)
   if output:sp.run(['hyprctl','output','remove',output],stdout=sp.DEVNULL)

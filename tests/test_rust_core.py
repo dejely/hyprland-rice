@@ -32,6 +32,10 @@ class NativeCore(unittest.TestCase):
   p=self.root/'idle.conf';p.write_text('general {\n lock_cmd = custom-lock\n}\nlistener {\n timeout = 10\n on-timeout = custom-action\n}\nlistener {\n timeout = 30\n on-timeout = loginctl lock-session\n}\n');self.call('idle-config','--file',str(p),'--lock','60');s=p.read_text();self.assertIn('custom-lock',s);self.assertIn('custom-action',s);self.assertIn('timeout = 60',s);self.assertNotIn('timeout = 30',s)
  def test_monitor_validation(self):
   p=self.root/'monitors.conf';self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','scale','1.25');self.assertIn('1.25',p.read_text());before=p.read_bytes();self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','mode','bad\nvalue',ok=False);self.assertEqual(p.read_bytes(),before)
+ def test_static_icon_variant_resolution(self):
+  root=self.root/'data/icons/banana-test-dark';root.mkdir(parents=True);(root/'index.theme').write_text('[Icon Theme]\nName=Fixture\n')
+  resolved=json.loads(self.call('icon-theme','resolve','--theme','banana-test','--mode','dark','--dynamic').stdout)
+  self.assertTrue(resolved['ok']);self.assertEqual(resolved['out'],'banana-test-dark');self.assertFalse(resolved['dynamic']);self.assertEqual(resolved['capability'],'none')
  def test_thumbnail_generation_and_cache_limits(self):
   import shutil
   native=self.root/'native';native.mkdir();shutil.copy2(ROOT/'integration/thumbnail.sh',native/'thumbnail.sh');shutil.copy2(BIN,native/'rice-core')
