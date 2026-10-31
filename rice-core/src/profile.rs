@@ -154,6 +154,13 @@ pub fn switch(a: &[String]) -> Result<()> {
         settings_data["apps"]["update"] = json!(format!("kitty --hold '{executable}' host update"));
         storage::write_json(&settings, &settings_data)?;
     }
+    if name == "end4-lite" && settings_data["settings"]["style"] != "dashboard" {
+        if !settings_data["settings"].is_object() {
+            settings_data["settings"] = json!({});
+        }
+        settings_data["settings"]["style"] = json!("dashboard");
+        storage::write_json(&settings, &settings_data)?;
+    }
     storage::palette(
         &config().join("quickshell/qml_color.json"),
         &state().join("end4/user/generated/colors.json"),
