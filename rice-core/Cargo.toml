@@ -1,0 +1,20 @@
+[package]
+name = "rice-core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+fs2 = "0.4"
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+regex = "1"
+walkdir = "2"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
