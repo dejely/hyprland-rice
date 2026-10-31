@@ -64,6 +64,20 @@ fn change(
 }
 pub fn switch(a: &[String]) -> Result<()> {
     let root = PathBuf::from(a.first().context("checkout")?).canonicalize()?;
+    if !matches!(a.get(1).map(String::as_str), Some("install" | "uninstall")) {
+        bail!("Usage: install.sh install|uninstall --profile end4-lite|end4|jakoolit [--no-start]");
+    }
+    let mut i = 2;
+    while i < a.len() {
+        match a[i].as_str() {
+            "--profile" => {
+                a.get(i + 1).context("--profile requires a name")?;
+                i += 2;
+            }
+            "--no-start" => i += 1,
+            other => bail!("Unknown installer option: {other}"),
+        }
+    }
     let name = arg(a, "--profile").unwrap_or("end4-lite");
     if !["end4", "end4-lite", "jakoolit"].contains(&name) {
         bail!("Unknown profile");
@@ -73,6 +87,16 @@ pub fn switch(a: &[String]) -> Result<()> {
     fs::create_dir_all(state())?;
     let _l = storage::lock(&state().join("profiles.lock"))?;
     let manifest = state().join("end4-profile.json");
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%f").to_string();
+    let runtime = state().join("end4-runtimes").join(&stamp);
+    if name != "jakoolit" && !uninstall {
+        if !config().join("hypr/hyprland.conf").is_file() {
+            bail!("Install JaKooLit/Hyprland first");
+        }
+        // Build before changing an existing profile, so a bad patch leaves it intact.
+        runtime::build(&root, &runtime, name == "end4-lite")?;
+    }
+
     if manifest.exists() {
         let old = read(&manifest)?;
         let entries = old["entries"].as_array().context("manifest")?;
@@ -105,9 +129,6 @@ pub fn switch(a: &[String]) -> Result<()> {
         println!("Profile: jakoolit; tasks and personal settings preserved");
         return Ok(());
     }
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%f").to_string();
-    let runtime = state().join("end4-runtimes").join(&stamp);
-    runtime::build(&root, &runtime, name == "end4-lite")?;
     let backup = state().join("backups").join(format!("end4-{stamp}"));
     fs::create_dir_all(&backup)?;
     let settings = config().join("hyprland-rice/end4/config.json");
@@ -242,6 +263,20 @@ fn activate(name: &str) -> Result<()> {
             .output()
             .ok();
     }
+    if Command::new("pgrep")
+        .args(["-x", "hypridle"])
+        .output()?
+        .status
+        .success()
+    {
+        Command::new("pkill").args(["-x", "hypridle"]).status().ok();
+        Command::new("setsid")
+            .args(["-f", "hypridle"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+    }
     run(Command::new("bash").arg(config().join("hypr/UserScripts/rice-desktop/start.sh")))?;
     run(Command::new("systemctl").args(["--user", "restart", "rice-desktop.service"]))?;
     if name == "jakoolit" {
@@ -249,7 +284,7 @@ fn activate(name: &str) -> Result<()> {
             vec!["swww-daemon", "--format", "xrgb"],
             vec!["swaync"],
             vec!["waybar"],
-            vec!["qs", "-c", "overview"],
+            vec!["qs", "--no-duplicate", "-c", "overview"],
         ] {
             let existing = Command::new("pgrep")
                 .args(["-x", args[0]])
