@@ -1,6 +1,26 @@
 --- a/RiceBridge.qml
 +++ b/RiceBridge.qml
-@@ -10,7 +10,14 @@
+@@ -1,16 +1,34 @@
+ import QtQuick
++import Rice.Native 1.0
+ import Quickshell
+ import Quickshell.Io
+ import qs
+ import qs.services
+ import qs.modules.common
+ Scope {
++    function canTrim() { return !GlobalStates.overviewOpen && !GlobalStates.settingsOpen && !GlobalStates.sidebarRightOpen && !GlobalStates.wallpaperSelectorOpen && !GlobalStates.mediaControlsOpen; }
++    Timer { id: memoryTrim; interval: 1500; onTriggered: { if (canTrim()) Memory.trim(); } }
++    Connections {
++        target: GlobalStates
++        function onOverviewOpenChanged() { memoryTrim.restart(); }
++        function onSettingsOpenChanged() { memoryTrim.restart(); }
++        function onSidebarRightOpenChanged() { memoryTrim.restart(); }
++        function onWallpaperSelectorOpenChanged() { memoryTrim.restart(); }
++        function onMediaControlsOpenChanged() { memoryTrim.restart(); }
++    }
+     Process {
+         id: paletteWorker
          command: ["python3", Quickshell.shellPath("integration/palette.py"),
              Directories.config.toString().replace("file://", "") + "/quickshell/qml_color.json", Directories.generatedMaterialThemePath]
      }
@@ -11,7 +31,7 @@
 +        onFileChanged: paletteDebounce.restart()
 +    }
 +    Timer { id: paletteDebounce; interval: 150; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; else restart(); } }
-+    Component.onCompleted: paletteDebounce.start()
++    Component.onCompleted: { paletteDebounce.start(); memoryTrim.start(); }
 +
  
      IpcHandler {
@@ -36,6 +56,40 @@
                  property string leftLastPage: "home"
                  property bool leftRememberPage: true
                  property JsonObject translator: JsonObject {
+--- a/modules/common/widgets/StyledRectangularShadow.qml
++++ b/modules/common/widgets/StyledRectangularShadow.qml
+@@ -1,14 +1,23 @@
+ import QtQuick
+ import QtQuick.Effects
+ import qs.modules.common
+-
+-RectangularShadow {
++Item {
++    id: root
+     required property var target
++    property real radius: target.radius ?? 0
++    property real blur: 0.9 * Appearance.sizes.elevationMargin
++    property vector2d offset: Qt.vector2d(0, 1)
++    property real spread: 1
++    property color color: Appearance.colors.colShadow
++    property bool cached: true
+     anchors.fill: target
+-    radius: target.radius
+-    blur: 0.9 * Appearance.sizes.elevationMargin
+-    offset: Qt.vector2d(0.0, 1.0)
+-    spread: 1
+-    color: Appearance.colors.colShadow
+-    cached: true
++    Loader {
++        anchors.fill: parent
++        active: root.visible && root.opacity > 0 && root.width > 0 && root.height > 0
++        sourceComponent: RectangularShadow {
++            anchors.fill: parent
++            radius: root.radius; blur: root.blur; offset: root.offset
++            spread: root.spread; color: root.color; cached: root.cached
++        }
++    }
+ }
 --- a/modules/common/widgets/WidgetCard.qml
 +++ b/modules/common/widgets/WidgetCard.qml
 @@ -21,7 +21,10 @@
@@ -125,6 +179,35 @@
                  visible: !blurLoader.active && !bgRoot.videoRevealed
                      && (bgRoot.wallpaperAnimation === "" || bgRoot.transitionProgress >= 1.0)
                      && !centeredWallpaper.centeredHidesFullWallpaper
+--- a/modules/ii/background/CenteredWallpaper.qml
++++ b/modules/ii/background/CenteredWallpaper.qml
+@@ -54,7 +54,7 @@
+     // so the layer + OpacityMask + 2D canvases are ~6x cheaper per frame;
+     // the scale below compensates, so the silhouette and the picture inside
+     // stay identical (edges soften only while the shape outgrows the layer).
+-    property real centeredShapeRenderSize: Math.max(1, Math.ceil(
++    property real centeredShapeRenderSize: !root.centeredWallpaperEnabled ? 1 : Math.max(1, Math.ceil(
+         Math.hypot(root.screen.width, root.screen.height)))
+ 
+     // 0 = locked (wallpaper rests centered inside the shape), 1 = unlocked
+@@ -219,7 +219,7 @@
+             }
+         }
+ 
+-        layer.enabled: true
++        layer.enabled: root.centeredWallpaperEnabled
+         layer.effect: OpacityMask {
+             maskSource: MaterialShape {
+                 width: centeredWallpaperShapeItem.width
+@@ -233,7 +233,7 @@
+             width: root.width
+             height: root.height
+             anchors.centerIn: parent
+-            source: root.shapeImagePath
++            source: root.centeredWallpaperEnabled ? root.shapeImagePath : ""
+             fillMode: Image.PreserveAspectCrop
+             mipmap: true
+             antialiasing: true
 --- a/modules/ii/background/WidgetsLoader.qml
 +++ b/modules/ii/background/WidgetsLoader.qml
 @@ -10,16 +10,10 @@
