@@ -64,6 +64,7 @@ fn dispatch(a: &[String]) -> Result<()> {
         "clipboard-dedupe" => extras::dedupe(a)?,
         "monitor-caps" => extras::caps(a)?,
         "icons" => extras::icons(a)?,
+        "icon-theme" => extras::icon_theme(a)?,
         "tasks" => println!("{}", storage::tasks(a)?),
         "cache-prune" => storage::prune_thumbnails()?,
         "palette" => storage::palette(

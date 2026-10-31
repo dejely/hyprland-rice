@@ -228,3 +228,61 @@ pub fn icons(a: &[String]) -> Result<()> {
     println!("{result}");
     Ok(())
 }
+
+/// Resolve installed static icon variants without running upstream recoloring workers.
+pub fn icon_theme(a: &[String]) -> Result<()> {
+    let theme = arg(a, "--theme").context("--theme")?;
+    if theme.contains('/') || theme == ".." {
+        bail!("Invalid theme name");
+    }
+    let mode = arg(a, "--mode").unwrap_or("dark");
+    let mut roots = vec![
+        home().join(".icons"),
+        xdg("XDG_DATA_HOME", ".local/share").join("icons"),
+    ];
+    roots.extend(
+        env::var("XDG_DATA_DIRS")
+            .unwrap_or("/usr/local/share:/usr/share".into())
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| Path::new(s).join("icons")),
+    );
+    let find = |name: &str| {
+        roots
+            .iter()
+            .map(|p| p.join(name))
+            .find(|p| p.join("index.theme").is_file())
+    };
+    let override_key = if mode == "light" {
+        "--light-override"
+    } else {
+        "--dark-override"
+    };
+    let mut candidates = Vec::new();
+    if mode != "static" {
+        if let Some(name) = arg(a, override_key).filter(|s| !s.is_empty() && !s.contains('/')) {
+            candidates.push(name.to_owned());
+        }
+        candidates.push(format!("{theme}-{mode}"));
+        candidates.push(format!(
+            "{theme}-{}",
+            if mode == "light" { "Light" } else { "Dark" }
+        ));
+    }
+    candidates.push(theme.to_owned());
+    let located = candidates
+        .into_iter()
+        .find_map(|name| find(&name).map(|path| (name, path)));
+    if let Some((base, path)) = located {
+        println!(
+            "{}",
+            json!({"ok":true,"theme":theme,"mode":mode,"accent":"","adapter":"native-static","adapterVersion":1,"capability":"none","dynamic":false,"hasVariants":base!=theme,"base":base,"basePath":path,"out":base})
+        );
+    } else {
+        println!(
+            "{}",
+            json!({"ok":false,"theme":theme,"error":"Theme is not installed","capability":"none"})
+        );
+    }
+    Ok(())
+}

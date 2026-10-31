@@ -51,6 +51,7 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
         .arg("-i")
         .arg(root.join("integration/compat.patch")))?;
     fs::write(dest.join(".rice-generated"), "")?;
+    copy_tree(&root.join("integration/overrides"), &dest)?;
     if lite {
         run(Command::new("bash").arg(root.join("scripts/build-native.sh")))?;
         copy_tree(&root.join("rice-core/target/native"), &dest.join("native"))?;
@@ -94,6 +95,7 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
         ("scripts/hyprland/monitor_caps.py", "monitor-caps"),
         ("scripts/clipboard/dedupe.py", "clipboard-dedupe"),
         ("scripts/icon-resolve.py", "icons"),
+        ("scripts/theming/icon_theme_adapters/cli.py", "icon-theme"),
     ] {
         let p = dest.join(file);
         fs::write(
@@ -105,6 +107,10 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
         )?;
         fs::set_permissions(p, fs::Permissions::from_mode(0o755))?;
     }
+    let manager = dest.join("scripts/theming/icon-theme-manager.sh");
+    let text =
+        fs::read_to_string(&manager)?.replace("python3 \"$ADAPTER_CLI\"", "\"$ADAPTER_CLI\"");
+    fs::write(manager, text)?;
     for e in walkdir::WalkDir::new(&dest) {
         let e = e?;
         if e.path().extension().is_some_and(|s| s == "qml") {
