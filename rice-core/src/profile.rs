@@ -142,6 +142,18 @@ pub fn switch(a: &[String]) -> Result<()> {
             .context("Cannot find current wallpaper")?);
         storage::write_json(&settings, &d)?;
     }
+    // Replace only an integration-generated update command; retain personal commands.
+    let mut settings_data = read(&settings)?;
+    let previous_update = settings_data["apps"]["update"].as_str().unwrap_or("");
+    if previous_update.contains("end4-runtimes") && previous_update.contains("integration/host.py")
+    {
+        let executable = runtime
+            .join("integration/rice-core")
+            .to_string_lossy()
+            .replace('\'', "'\\''");
+        settings_data["apps"]["update"] = json!(format!("kitty --hold '{executable}' host update"));
+        storage::write_json(&settings, &settings_data)?;
+    }
     storage::palette(
         &config().join("quickshell/qml_color.json"),
         &state().join("end4/user/generated/colors.json"),
@@ -150,6 +162,15 @@ pub fn switch(a: &[String]) -> Result<()> {
     fs::create_dir_all(&session)?;
     for file in ["start.sh", "launch.sh", "lock.sh"] {
         fs::copy(root.join("scripts").join(file), session.join(file))?;
+    }
+    if name == "end4-lite" {
+        fs::copy(
+            root.join("integration/lite-env.sh"),
+            runtime.join("integration/lite-env.sh"),
+        )?;
+        let launch = session.join("launch.sh");
+        let text = fs::read_to_string(&launch)?.replace("exec /usr/bin/qs", "export QML_IMPORT_PATH=\"$(dirname -- \"$(realpath -- \"$0\")\")/../native${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}\"\nsource \"$(dirname -- \"$(realpath -- \"$0\")\")/../integration/lite-env.sh\"\nexec /usr/bin/qs");
+        fs::write(launch, text)?;
     }
     fs::copy(env::current_exe()?, session.join("rice-core"))?;
     for (file, cmd) in [
