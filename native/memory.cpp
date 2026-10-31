@@ -2,6 +2,9 @@
 #include <QtQml/QQmlEngine>
 #include <QtQml/QQmlExtensionPlugin>
 #include <QtQml/qqml.h>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QPixmapCache>
+#include <QtQuick/QQuickWindow>
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
@@ -11,8 +14,16 @@ class RiceMemory final : public QObject {
 public:
     explicit RiceMemory(QQmlEngine *e) : QObject(e), engine(e) {}
     Q_INVOKABLE void trim() {
+        for (auto *window : QGuiApplication::allWindows()) {
+            if (auto *quick = qobject_cast<QQuickWindow *>(window); quick && !quick->isVisible()) {
+                quick->setPersistentGraphics(false);
+                quick->setPersistentSceneGraph(false);
+                quick->releaseResources();
+            }
+        }
+        QPixmapCache::clear();
         engine->collectGarbage();
-        engine->trimComponentCache();
+        // Keep Quickshell singleton type identities stable across view recreation.
 #ifdef __GLIBC__
         malloc_trim(0);
 #endif
