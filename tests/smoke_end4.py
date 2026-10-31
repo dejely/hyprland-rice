@@ -49,7 +49,9 @@ HARNESS = '''
                 const item = bgRoot.riceFind(widgetCanvas, "rice-tasks");
                 item.animateXPos=false; item.animateYPos=false; item.x=x; item.y=y; item.commitPosition();
             }
-            function resize(width: int, height: int): void {
+            function renderStats(): string { return JSON.stringify({shapeSize: centeredWallpaper.centeredShapeRenderSize, centered: centeredWallpaper.centeredWallpaperEnabled}); }
+        function centered(enabled: bool): void { Config.options.background.centeredWallpaper = enabled; }
+        function resize(width: int, height: int): void {
                 Config.options.background.widgets.todo.width=width;
                 Config.options.background.widgets.todo.height=height;
             }
@@ -88,9 +90,11 @@ def run(output):
         trace.write_text('#!/usr/bin/env bash\nif [[ \"${1:-}\" == reload ]]; then ps -p \"$PPID\" -o args= >> \"$RICE_COMMAND_LOG\"; fi\nprintf "%s\\n" "$*" >> "$RICE_COMMAND_LOG"\nexec /usr/bin/hyprctl "$@"\n')
         trace.chmod(0o755)
         deps = Path.home() / '.local/share/hyprland-rice/deps/usr/lib64'
-        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
+        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(runtime / 'native') + ':' + str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
                    XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_STATE_HOME=str(root / 'state'), XDG_CACHE_HOME=str(root / 'cache'), RICE_TEST_OUTPUT=output)
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            env.update(dict(line.removeprefix('export ').split('=', 1) for line in (ROOT / 'integration/lite-env.sh').read_text().splitlines() if line.startswith('export ')))
         # Private bus prevents taking the laptop notification service name.
         logfile = (root / 'shell.log').open('w+')
         process = None
@@ -148,6 +152,15 @@ def run(output):
             wait(lambda s: s['tasks'] == 1, 'undo')
             assert json.loads(tasks.read_text())['tasks'][0]['id'] == task_id
             print('PASS native UI entry, edit, completion, delete and undo retain ID', flush=True)
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] == 1
+                ipc('test', 'centered', 'true')
+                time.sleep(.8)
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] > 1
+                ipc('test', 'centered', 'false')
+                time.sleep(1.5)
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] == 1
+                print('PASS disabled wallpaper masks stay unallocated; enabling and disabling works', flush=True)
             for index in range(24):
                 assert ipc('desktop', 'task', 'add', json.dumps({'text': f'Native list item {index}'})) == 'true'
                 wait(lambda s: s['tasks'] == index + 2, 'long list')

@@ -6,11 +6,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'integration'))
 from build import build
 from palette import atomic_json, sync
-p=argparse.ArgumentParser(); p.add_argument('--profile',choices=['end4','end4-lite'],default='end4');p.add_argument('--seconds',type=int,default=600);p.add_argument('--cycles',type=int,default=0);p.add_argument('--render-loop',default='threaded');p.add_argument('--massif',action='store_true');p.add_argument('--omit',default='');p.add_argument('--report',required=True);a=p.parse_args()
+p=argparse.ArgumentParser(); p.add_argument('--profile',choices=['end4','end4-lite'],default='end4');p.add_argument('--seconds',type=int,default=600);p.add_argument('--cycles',type=int,default=0);p.add_argument('--atlas-size',type=int,default=0);p.add_argument('--shared-bus',action='store_true');p.add_argument('--backend',default='opengl');p.add_argument('--no-depth',action='store_true');p.add_argument('--render-loop',default='threaded');p.add_argument('--massif',action='store_true');p.add_argument('--omit',default='');p.add_argument('--report',required=True);a=p.parse_args()
 def command(*args): return sp.check_output(args,text=True).strip()
 original=next(m['name'] for m in json.loads(command('hyprctl','monitors','-j')) if m['focused'])
 before={m['name'] for m in json.loads(command('hyprctl','monitors','-j'))}
-output=None;unit='rice-benchmark-'+str(os.getpid()); report={'profile':a.profile,'samples':[],'cycles':[]}
+output=None;unit='rice-benchmark-'+str(os.getpid()); report={'profile':a.profile,'backend':a.backend,'render_loop':a.render_loop,'no_depth_stencil':a.no_depth,'atlas_size':a.atlas_size,'private_bus':not a.shared_bus,'samples':[],'cycles':[]}
 with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
  root=Path(td);runtime=root/'shell'
  try:
@@ -26,8 +26,11 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   output=next(m['name'] for m in json.loads(command('hyprctl','monitors','-j')) if m['name'] not in before)
   sp.run(['hyprctl','keyword','monitor',output+',1920x1200@60,auto,1'],check=True,stdout=sp.DEVNULL)
   deps=Path.home()/'.local/share/hyprland-rice/deps/usr/lib64'
-  env=dict(os.environ,QT_QPA_PLATFORM='wayland',QML_IMPORT_PATH=str(deps/'qt6/qml'),LD_LIBRARY_PATH=str(deps),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_STATE_HOME=str(root/'state'),XDG_CACHE_HOME=str(root/'cache'),RICE_TEST_OUTPUT=output,QSG_INFO='1',QSG_RENDER_LOOP=a.render_loop,MALLOC_ARENA_MAX='2',MALLOC_TRIM_THRESHOLD_='131072')
-  sp.run(['systemd-run','--user','--quiet','--unit='+unit,'--property=MemoryAccounting=yes','--property=StandardOutput=append:'+str(root/'shell.log'),'--property=StandardError=append:'+str(root/'shell.log'),'env',*[k+'='+v for k,v in env.items() if k in ('HOME','PATH','WAYLAND_DISPLAY','HYPRLAND_INSTANCE_SIGNATURE','XDG_RUNTIME_DIR','XDG_CURRENT_DESKTOP','QT_QPA_PLATFORM','QML_IMPORT_PATH','LD_LIBRARY_PATH','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','RICE_TEST_OUTPUT','QSG_INFO','QSG_RENDER_LOOP','MALLOC_ARENA_MAX','MALLOC_TRIM_THRESHOLD_')],'dbus-run-session',*(['valgrind','--tool=massif','--massif-out-file='+a.report+'.massif','--max-snapshots=30'] if a.massif else []),'qs','-p',str(runtime)],check=True)
+  env=dict(os.environ,QT_QPA_PLATFORM='wayland',QML_IMPORT_PATH=str(runtime/'native')+':'+str(deps/'qt6/qml'),LD_LIBRARY_PATH=str(deps),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_STATE_HOME=str(root/'state'),XDG_CACHE_HOME=str(root/'cache'),RICE_TEST_OUTPUT=output,QSG_RHI_BACKEND=a.backend,QSG_INFO='1',QSG_RENDER_LOOP=a.render_loop,MALLOC_ARENA_MAX='2',MALLOC_TRIM_THRESHOLD_='131072')
+  
+  if a.atlas_size:env.update(QSG_ATLAS_WIDTH=str(a.atlas_size),QSG_ATLAS_HEIGHT=str(a.atlas_size))
+  if a.no_depth:env.update(QSG_NO_DEPTH_BUFFER='1',QSG_NO_STENCIL_BUFFER='1')
+  sp.run(['systemd-run','--user','--quiet','--unit='+unit,'--property=MemoryAccounting=yes','--property=StandardOutput=append:'+str(root/'shell.log'),'--property=StandardError=append:'+str(root/'shell.log'),'env',*[k+'='+v for k,v in env.items() if k in ('HOME','PATH','WAYLAND_DISPLAY','HYPRLAND_INSTANCE_SIGNATURE','XDG_RUNTIME_DIR','XDG_CURRENT_DESKTOP','QT_QPA_PLATFORM','QML_IMPORT_PATH','LD_LIBRARY_PATH','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','RICE_TEST_OUTPUT','QSG_ATLAS_WIDTH','QSG_ATLAS_HEIGHT','QSG_RHI_BACKEND','QSG_NO_DEPTH_BUFFER','QSG_NO_STENCIL_BUFFER','QSG_INFO','QSG_RENDER_LOOP','MALLOC_ARENA_MAX','MALLOC_TRIM_THRESHOLD_')],* ([] if a.shared_bus else ['dbus-run-session']),*(['valgrind','--tool=massif','--massif-out-file='+a.report+'.massif','--max-snapshots=30'] if a.massif else []),'qs','-p',str(runtime)],check=True)
   def ipc(target,method,*args):return sp.check_output(['qs','ipc','-p',str(runtime),'call',target,method,*args],env=env,text=True,stderr=sp.DEVNULL).strip()
   for _ in range(600):
    try: json.loads(ipc('desktop','status'));break
