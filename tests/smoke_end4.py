@@ -61,7 +61,11 @@ HARNESS = '''
 def run(output):
     with tempfile.TemporaryDirectory(prefix='rice-end4-smoke-') as td:
         root = Path(td)
-        runtime = build(root / 'shell')
+        runtime = root / 'shell'
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            subprocess.run([str(ROOT / 'rice-core/target/release/rice-core'), 'build', str(ROOT), str(runtime), 'end4-lite'], check=True, stdout=subprocess.DEVNULL)
+        else:
+            runtime = build(runtime)
         bg = runtime / 'modules/ii/background/Background.qml'
         source = bg.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         bg.write_text(source.replace('        id: bgRoot', '        id: bgRoot\n' + HARNESS, 1))
