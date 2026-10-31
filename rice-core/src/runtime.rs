@@ -52,6 +52,8 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
         .arg(root.join("integration/compat.patch")))?;
     fs::write(dest.join(".rice-generated"), "")?;
     if lite {
+        run(Command::new("bash").arg(root.join("scripts/build-native.sh")))?;
+        copy_tree(&root.join("rice-core/target/native"), &dest.join("native"))?;
         run(Command::new("patch")
             .arg("--batch")
             .arg("--fuzz=0")
