@@ -1,0 +1,2400 @@
+--- a/GlobalStates.qml
++++ b/GlobalStates.qml
+@@ -37,6 +37,10 @@
+     property var settingsTarget: null
+ 
+     function openSettingsAt(pageId, label, section, subsection) {
++        if (Config.options.settings.style === "dashboard") {
++            root.dashboardPage = 4;
++            root.dashboardGroup = SettingsPages.byId(pageId)?.name || pageId;
++        }
+         root.settingsOpen = true;
+         Qt.callLater(() => {
+             root.settingsTarget = { page: pageId, label: label ?? "", section: section ?? "", subsection: subsection ?? "" };
+--- /dev/null
++++ b/RiceBridge.qml
+@@ -0,0 +1,32 @@
++import QtQuick
++import Quickshell
++import Quickshell.Io
++import qs
++import qs.services
++import qs.modules.common
++Scope {
++    Process {
++        id: paletteWorker
++        command: ["python3", Quickshell.shellPath("integration/palette.py"),
++            Directories.config.toString().replace("file://", "") + "/quickshell/qml_color.json", Directories.generatedMaterialThemePath]
++    }
++    Timer { interval: 1000; running: true; repeat: true; triggeredOnStart: true; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; } }
++
++    IpcHandler {
++        target: "desktop"
++        function status(): string {
++            return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
++                completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
++                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
++        }
++        function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
++        function refreshTasks(): void { Todo.refresh(); }
++        function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
++        function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
++        function barLayout(): void { GlobalStates.openSettingsAt("bar", "", "Bar layout", ""); }
++        function colors(): void { GlobalStates.openSettingsAt("interface", "", "Wallpaper colors", ""); }
++        function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
++        function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
++        function help(): void { GlobalStates.overviewOpen = true; }
++    }
++}
+--- a/modules/common/Appearance.qml
++++ b/modules/common/Appearance.qml
+@@ -226,8 +226,8 @@
+         property int unsharpenmore: 6
+         property int verysmall: 8
+         property int small: 12
+-        property int normal: 17
+-        property int large: 23
++        property int normal: 20
++        property int large: 20
+         property int verylarge: 30
+         property int full: 9999
+         property int screenRounding: large
+--- a/modules/common/Config.qml
++++ b/modules/common/Config.qml
+@@ -244,7 +244,7 @@
+                 property string networkEthernet: "kcmshell6 kcm_networkmanagement"
+                 property string taskManager: "plasma-systemmonitor --page-name Processes"
+                 property string terminal: "kitty -1" // This is only for shell actions
+-                property string update: "kitty -1 --hold=yes fish -i -c 'pkexec pacman -Syu'"
++                property string update: "kitty --hold python3 \"" + Quickshell.shellPath("integration/host.py") + "\" update"
+                 property string volumeMixer: `~/.config/hypr/hyprland/scripts/launch_first_available.sh "pavucontrol-qt" "pavucontrol"`
+             }
+ 
+@@ -378,6 +378,8 @@
+                     }
+ 
+                     property JsonObject todo: JsonObject {
++                        property real width: 360
++                        property real height: 460
+                         property bool enable: false
+                         property string placementStrategy: "free"
+                         property real x: 400
+--- a/modules/common/Directories.qml
++++ b/modules/common/Directories.qml
+@@ -10,9 +10,9 @@
+ Singleton {
+     // XDG Dirs, with "file://"
+     readonly property string home: StandardPaths.standardLocations(StandardPaths.HomeLocation)[0]
+-    readonly property string config: StandardPaths.standardLocations(StandardPaths.ConfigLocation)[0]
+-    readonly property string state: StandardPaths.standardLocations(StandardPaths.StateLocation)[0]
+-    readonly property string cache: StandardPaths.standardLocations(StandardPaths.CacheLocation)[0]
++    readonly property string config: 'file://' + (Quickshell.env("XDG_CONFIG_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.config")
++    readonly property string state: 'file://' + (Quickshell.env("XDG_STATE_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.local/state") + "/hyprland-rice/end4"
++    readonly property string cache: 'file://' + (Quickshell.env("XDG_CACHE_HOME") || FileUtils.trimFileProtocol(Directories.home) + "/.cache") + "/hyprland-rice/end4"
+     readonly property string genericCache: StandardPaths.standardLocations(StandardPaths.GenericCacheLocation)[0]
+     readonly property string documents: StandardPaths.standardLocations(StandardPaths.DocumentsLocation)[0]
+     readonly property string downloads: StandardPaths.standardLocations(StandardPaths.DownloadLocation)[0]
+@@ -30,7 +30,7 @@
+     property string booruDownloads: FileUtils.trimFileProtocol(Directories.pictures  + "/homework")
+     property string booruDownloadsNsfw: FileUtils.trimFileProtocol(Directories.pictures + "/homework/🌶️")
+     property string latexOutput: FileUtils.trimFileProtocol(`${Directories.cache}/media/latex`)
+-    property string shellConfig: FileUtils.trimFileProtocol(`${Directories.config}/illogical-impulse`)
++    property string shellConfig: FileUtils.trimFileProtocol(`${Directories.config}/hyprland-rice/end4`)
+     property string shellConfigName: "config.json"
+     property string shellConfigPath: `${Directories.shellConfig}/${Directories.shellConfigName}`
+ 	property string todoPath: FileUtils.trimFileProtocol(`${Directories.state}/user/todo.json`)
+@@ -42,7 +42,7 @@
+     property string generatedWallpaperCategoryPath: FileUtils.trimFileProtocol(`${Directories.state}/user/generated/wallpaper/category.txt`)
+     property string cliphistDecode: FileUtils.trimFileProtocol(`/tmp/quickshell/media/cliphist`)
+     property string screenshotTemp: "/tmp/quickshell/media/screenshot"
+-    property string wallpaperSwitchScriptPath: FileUtils.trimFileProtocol(`${Directories.scriptPath}/colors/switchwall.sh`)
++    property string wallpaperSwitchScriptPath: FileUtils.trimFileProtocol(`${Quickshell.shellPath("integration")}/switchwall.sh`)
+     property string defaultAiPrompts: Quickshell.shellPath("defaults/ai/prompts")
+     property string userAiPrompts: FileUtils.trimFileProtocol(`${Directories.shellConfig}/ai/prompts`)
+     property string userActions: FileUtils.trimFileProtocol(`${Directories.shellConfig}/actions`)
+--- a/modules/common/functions/Session.qml
++++ b/modules/common/functions/Session.qml
+@@ -1,6 +1,7 @@
+ pragma Singleton
+ import Quickshell
+ import qs.services
++import qs.modules.common.functions
+ import qs.modules.common
+ 
+ Singleton {
+@@ -20,7 +21,7 @@
+         if (WM.compositor === "niri") {
+             Quickshell.execDetached(["qs", "-c", "end4-pC", "ipc", "call", "lock", "activate"]);
+         } else {
+-            Quickshell.execDetached(["loginctl", "lock-session"]);
++            Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"]);
+         }
+     }
+ 
+--- a/modules/common/models/WorkspaceModel.qml
++++ b/modules/common/models/WorkspaceModel.qml
+@@ -21,7 +21,7 @@
+ 
+     readonly property int activeNumber: {
+         if (WM.compositor === "hyprland")
+-            return hyprMonitor?.activeWorkspace?.id ?? 1
++            return Math.max(1, hyprMonitor?.activeWorkspace?.id ?? 1)
+         const ws = WM.workspaces.find(w => w.output === root.monitorName && w.is_active)
+         return ws?.idx ?? 1
+     }
+--- a/modules/common/models/hyprland/MonitorConfigOption.qml
++++ b/modules/common/models/hyprland/MonitorConfigOption.qml
+@@ -15,9 +15,9 @@
+     property var monitors: []
+     property var _pendingChanges: ({})
+ 
+-    readonly property string configuratorScriptPath: Quickshell.shellPath("scripts/hyprland/monitor_configurator.py")
++    readonly property string configuratorScriptPath: Quickshell.shellPath("integration/monitor_config.py")
+     readonly property string capsScriptPath: Quickshell.shellPath("scripts/hyprland/monitor_caps.py")
+-    readonly property string monitorsLuaPath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/monitors.lua`)
++    readonly property string monitorsLuaPath: FileUtils.trimFileProtocol(`${Directories.shellConfig}/monitors.conf`)
+ 
+     Component.onCompleted: fetchProc.running = true
+ 
+@@ -243,7 +243,7 @@
+ 
+     Process {
+         id: saveProc
+-        onRunningChanged: if (!running) reloadProc.running = true
++        onExited: (code, status) => { if (code === 0) reloadProc.running = true; }
+     }
+ 
+     Process {
+--- a/modules/common/panels/lock/LockScreen.qml
++++ b/modules/common/panels/lock/LockScreen.qml
+@@ -100,7 +100,7 @@
+             Quickshell.execDetached(["bash", "-c", "pidof hyprlock || hyprlock"]);
+             return;
+         }
+-        GlobalStates.screenLocked = true;
++        Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"]);
+     }
+ 
+     IpcHandler {
+--- a/modules/common/widgets/FullscreenPolkitWindow.qml
++++ b/modules/common/widgets/FullscreenPolkitWindow.qml
+@@ -15,7 +15,7 @@
+     Loader {
+         active: PolkitService.active
+         sourceComponent: Variants {
+-            model: Quickshell.screens
++            model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+             delegate: PanelWindow {
+                 id: panelWindow
+                 required property var modelData
+--- a/modules/common/widgets/ThumbnailImage.qml
++++ b/modules/common/widgets/ThumbnailImage.qml
+@@ -47,7 +47,7 @@
+             // script, so quotes in file names can neither break nor inject into it.
+             // Exit codes: 0 = already cached, 1 = generated, 2 = failed.
+             return ["bash", "-c", `
+-                thumb="$1"; src="$2"; max="$3"
++                thumb="$1"; src="$2"; max="$3"; mkdir -p "$(dirname "$thumb")"
+                 [ -f "$thumb" ] && exit 0
+                 tmp="$thumb.$$.tmp.png"
+                 trap 'kill "$pid" 2>/dev/null; rm -f "$tmp"' EXIT
+--- a/modules/common/widgets/WidgetCard.qml
++++ b/modules/common/widgets/WidgetCard.qml
+@@ -10,8 +10,10 @@
+     property real tintOpacity: 0.55
+     property bool glass: true
+ 
+-    radius: Appearance.rounding?.verylarge ?? 30
+-    color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colPrimaryContainer
++    radius: 20
++    color: glass && Config.options.background.widgets.glass.enable ? "transparent" : Appearance.colors.colLayer1
++    border.width: 1
++    border.color: Qt.rgba(1, 1, 1, 0.1)
+ 
+     StyledRectangularShadow {
+         target: root
+--- a/modules/ii/background/Background.qml
++++ b/modules/ii/background/Background.qml
+@@ -16,7 +16,7 @@
+ 
+ Variants {
+     id: root
+-    model: Quickshell.screens
++    model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+ 
+     PanelWindow {
+         id: bgRoot
+--- a/modules/ii/background/NiriBackdrop.qml
++++ b/modules/ii/background/NiriBackdrop.qml
+@@ -11,7 +11,7 @@
+ 
+ Variants {
+     id: wallpaperBackdropRoot
+-    model: Quickshell.screens
++    model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+ 
+     Loader {
+         id: loader
+--- a/modules/ii/background/widgets/clock/ClockWidget.qml
++++ b/modules/ii/background/widgets/clock/ClockWidget.qml
+@@ -26,7 +26,7 @@
+         return Appearance.colors[propName] ?? root.colText;
+     }
+     property bool wallpaperSafetyTriggered: false
+-    needsColText: clockStyle === "digital" || clockStyle === "daily"
++    needsColText: !customClockColorKey && (clockStyle === "digital" || clockStyle === "daily")
+     x: forceCenter ? ((root.screenWidth - root.width) / 2) : targetX
+     y: forceCenter ? ((root.screenHeight - root.height) / 2) : targetY
+     visibleWhenLocked: true
+--- a/modules/ii/background/widgets/media/MediaWidget.qml
++++ b/modules/ii/background/widgets/media/MediaWidget.qml
+@@ -337,7 +337,7 @@
+                         }
+                         StyledText {
+                             Layout.fillWidth: true
+-                            text: root.currentPlayer?.trackTitle ?? Translation.tr("Something")
++                            text: root.currentPlayer?.trackTitle ?? Translation.tr("No active player")
+                             font.pixelSize: Appearance.font.pixelSize.smaller
+                             color: Appearance.colors.colOnPrimaryContainer
+                             opacity: 0.6
+@@ -476,7 +476,7 @@
+                     }
+                     StyledText {
+                         Layout.fillWidth: true
+-                        text: root.currentPlayer?.trackTitle ?? Translation.tr("Something")
++                        text: root.currentPlayer?.trackTitle ?? Translation.tr("No active player")
+                         font.pixelSize: Appearance.font.pixelSize.small
+                         color: Appearance.colors.colOnPrimaryContainer
+                         opacity: 0.65
+@@ -631,7 +631,7 @@
+ 
+                             StyledText {
+                                 Layout.fillWidth: true
+-                                text: root.currentPlayer?.trackTitle ?? Translation.tr("Something")
++                                text: root.currentPlayer?.trackTitle ?? Translation.tr("No active player")
+                                 font.pixelSize: Appearance.font.pixelSize.small
+                                 color: Appearance.colors.colOnPrimaryContainer
+                                 opacity: 0.65
+@@ -827,7 +827,7 @@
+ 
+                             StyledText {
+                                 Layout.fillWidth: true
+-                                text: root.currentPlayer?.trackTitle ?? Translation.tr("Play")
++                                text: root.currentPlayer?.trackTitle ?? Translation.tr("No active player")
+                                 font.pixelSize: Appearance.font.pixelSize.small
+                                 font.weight: Font.DemiBold
+                                 font.italic: true
+--- a/modules/ii/background/widgets/todo/TodoWidget.qml
++++ b/modules/ii/background/widgets/todo/TodoWidget.qml
+@@ -1,250 +1,153 @@
+ import QtQuick
++import QtQuick.Controls
++import QtQuick.Controls as QQC
+ import QtQuick.Layouts
+-import QtQuick.Controls
+ import qs
+ import qs.services
+ import qs.modules.common
+-import qs.modules.common.functions
+ import qs.modules.common.widgets
+ import qs.modules.common.widgets.widgetCanvas
+ import qs.modules.ii.background.widgets
+ 
+ AbstractBackgroundWidget {
+     id: root
++    objectName: "rice-tasks"
+     configEntryName: "todo"
+     hoverEnabled: true
+-
+-    readonly property real cardWidth: 276
+-    readonly property real cardHeight: 120
+-    readonly property real cardSpacing: 12
+-
+-    implicitWidth: root.cardWidth
+-    implicitHeight: root.cardHeight * 2 + root.cardSpacing
+-
+-    property string mode: "list" // "list" | "edit"
+-    property string editingText: ""
+-    onModeChanged: GlobalStates.desktopWidgetKeyboardFocus = (mode === "edit")
+-
+-    function toggleFlip() { cardWrapper.flip() }
+-
+-    function openNewTask() {
+-        root.editingText = ""
+-        toggleFlip()
++    implicitWidth: configEntry.width
++    implicitHeight: configEntry.height
++    property string editingId: ""
++    component TaskButton: QQC.Button {
++        id: button
++        implicitHeight: 34
++        implicitWidth: 54
++        contentItem: StyledText { text: button.text; horizontalAlignment: Text.AlignHCenter; opacity: button.enabled ? 1 : 0.4 }
++        background: Rectangle { radius: 10; color: button.hovered ? Appearance.colors.colLayer2 : Appearance.colors.colLayer1; border.width: 1; border.color: Appearance.colors.colLayer0Border }
+     }
+-
+-    function saveAndBack() {
+-        if (root.editingText.trim().length > 0) {
+-            Todo.addTask(root.editingText.trim())
++    component TaskCheck: QQC.CheckBox {
++        id: check
++        implicitWidth: 28
++        implicitHeight: 34
++        indicator: Rectangle {
++            width: 22; height: 22
++            anchors.centerIn: parent
++            radius: 11
++            color: check.checked ? Appearance.colors.colPrimary : "transparent"
++            border.width: 1
++            border.color: Appearance.colors.colPrimary
++            StyledText { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: Appearance.colors.colOnPrimary }
+         }
+-        toggleFlip()
+     }
+-
+-    FlipCard {
+-        id: cardWrapper
++    component TaskField: QQC.TextField {
++        color: Appearance.colors.colOnLayer0
++        placeholderTextColor: Appearance.colors.colSubtext
++        selectionColor: Appearance.colors.colPrimary
++        selectedTextColor: Appearance.colors.colOnPrimary
++        font.family: Appearance.font.family.main
++        font.pixelSize: 14
++        implicitHeight: 38
++        padding: 10
++        background: Rectangle { radius: 10; color: Appearance.colors.colLayer2; border.width: 1; border.color: Appearance.colors.colLayer0Border }
++    }
++    WidgetCard {
++        id: card
+         anchors.fill: parent
+-        onFlipped: root.mode = (root.mode === "list" ? "edit" : "list")
+-
+-        WidgetCard {
+-            id: contentRect
+-            anchors.fill: parent
+-            widget: root
+-
+-            // List
+-            ColumnLayout {
+-                id: listPage
+-                anchors { fill: parent; margins: 12 }
+-                spacing: 10
+-                visible: root.mode === "list"
+-
+-                RowLayout {
+-                    Layout.fillWidth: true
+-                    spacing: 4
+-
+-                    StyledText {
+-                        Layout.topMargin: -4
+-                        Layout.leftMargin: 8
+-                        font.pixelSize: Appearance.font.pixelSize.huge
+-                        font.weight: Font.Medium
+-                        color: Appearance.colors.colOnPrimaryContainer
+-                        text: "To-Do"
+-                    }
+-                    Item { Layout.fillWidth: true }
+-
+-                    ToolbarPairedFab {
+-                        Layout.rightMargin: 4
+-                        Layout.alignment: Qt.AlignVCenter
+-                        baseSize: 38
+-                        iconText: "add"
+-                        onClicked: root.openNewTask()
+-                    }
+-                }
+-
+-                StyledListView {
+-                    id: todoListView
+-                    Layout.fillWidth: true
+-                    Layout.fillHeight: true
+-                    clip: true
+-                    spacing: 6
+-                    model: Todo.list
+-
+-                    delegate: SwipeDelegate {
+-                        id: taskCard
+-                        required property var modelData
+-                        required property int index
+-
+-                        width: todoListView.width
+-                        implicitHeight: 55
+-                        padding: 0
+-                        background: null
+-                        clip: true
+-
+-                        property color bg: {
+-                            const cyclePos = index % 3
+-                            if (cyclePos === 0) return Appearance.colors.colTertiary
+-                            if (cyclePos === 1) return Appearance.colors.colSecondary
+-                            return Appearance.colors.colPrimary
++        widget: root
++        ColumnLayout {
++            anchors { fill: parent; margins: 16 }
++            spacing: 8
++            RowLayout {
++                Layout.fillWidth: true
++                StyledText { text: "Tasks"; font.pixelSize: 22; Layout.fillWidth: true }
++                TaskButton { objectName: "undo-delete"; text: "Undo"; enabled: !!Todo.deleted && !Todo.busy; onClicked: Todo.undo() }
++            }
++            StyledText {
++                Layout.fillWidth: true
++                visible: Todo.error.length > 0
++                text: Todo.error
++                textFormat: Text.PlainText
++                wrapMode: Text.Wrap
++                color: Appearance.colors.colError
++            }
++            TaskButton { text: "Retry"; visible: Todo.error.length > 0; enabled: !Todo.busy; onClicked: Todo.refresh() }
++            TaskField {
++                id: newTask
++                objectName: "new-task"
++                Layout.fillWidth: true
++                placeholderText: "Add a task…"
++                enabled: !Todo.busy
++                onActiveFocusChanged: GlobalStates.desktopWidgetKeyboardFocus = activeFocus
++                onAccepted: { if (Todo.addTask(text)) clear(); }
++            }
++            StyledText { text: "No tasks yet"; visible: Todo.list.length === 0 && !Todo.error }
++            ListView {
++                id: taskList
++                objectName: "task-scroll"
++                Layout.fillWidth: true
++                Layout.fillHeight: true
++                clip: true
++                spacing: 6
++                model: Todo.list
++                ScrollBar.vertical: ScrollBar {}
++                delegate: ColumnLayout {
++                    id: row
++                    required property var modelData
++                    required property int index
++                    width: taskList.width
++                    RowLayout {
++                        Layout.fillWidth: true
++                        TaskCheck {
++                            objectName: "toggle-" + row.modelData.id
++                            checked: row.modelData.done
++                            enabled: !Todo.busy
++                            onClicked: Todo.run("toggle", {id: row.modelData.id})
+                         }
+-                        property color fg: {
+-                            const cyclePos = index % 3
+-                            if (cyclePos === 0) return Appearance.colors.colOnTertiary
+-                            if (cyclePos === 1) return Appearance.colors.colOnSecondary
+-                            return Appearance.colors.colOnPrimary
++                        StyledText {
++                            Layout.fillWidth: true
++                            visible: root.editingId !== row.modelData.id
++                            text: row.modelData.text
++                            textFormat: Text.PlainText
++                            font.strikeout: row.modelData.done
++                            wrapMode: Text.Wrap
+                         }
+-
+-                        contentItem: Rectangle {
+-                            radius: Appearance.rounding.normal
+-                            color: taskCard.bg
+-                            width: parent.width - Math.abs(taskCard.swipe.position) * 6
+-                            opacity: taskCard.modelData.done ? 0.6 : 1
+-
+-                            RowLayout {
+-                                anchors {
+-                                    left: parent.left; right: parent.right
+-                                    verticalCenter: parent.verticalCenter
+-                                    leftMargin: 4; rightMargin: 12
+-                                }
+-                                spacing: 4
+-
+-                                Rectangle {
+-                                    Layout.leftMargin: 8
+-                                    Layout.preferredWidth: 26
+-                                    Layout.preferredHeight: 26
+-                                    radius: Appearance.rounding.full
+-                                    color: taskCard.modelData.done
+-                                        ? ColorUtils.transparentize(taskCard.fg, 0.8)
+-                                        : "transparent"
+-                                    border.width: 2
+-                                    border.color: taskCard.fg
+-
+-                                    MaterialSymbol {
+-                                        anchors.centerIn: parent
+-                                        visible: taskCard.modelData.done
+-                                        text: "check"
+-                                        iconSize: Appearance.font.pixelSize.normal
+-                                        color: taskCard.fg
+-                                    }
+-
+-                                    MouseArea {
+-                                        anchors.fill: parent
+-                                        cursorShape: Qt.PointingHandCursor
+-                                        onClicked: {
+-                                            if (taskCard.modelData.done)
+-                                                Todo.markUnfinished(taskCard.index)
+-                                            else
+-                                                Todo.markDone(taskCard.index)
+-                                        }
+-                                    }
+-                                }
+-
+-                                StyledText {
+-                                    Layout.fillWidth: true
+-                                    color: taskCard.fg
+-                                    text: taskCard.modelData.content
+-                                    elide: Text.ElideRight
+-                                    maximumLineCount: 1
+-                                    font.strikeout: taskCard.modelData.done
+-                                }
+-                            }
++                        TaskField {
++                            id: editField
++                            objectName: "edit-field-" + row.modelData.id
++                            Layout.fillWidth: true
++                            visible: root.editingId === row.modelData.id
++                            text: row.modelData.text
++                            onActiveFocusChanged: GlobalStates.desktopWidgetKeyboardFocus = activeFocus
++                            onAccepted: { if (Todo.edit(row.modelData.id, text)) root.editingId = ""; }
++                            Keys.onEscapePressed: root.editingId = ""
+                         }
+-
+-                        swipe.right: Rectangle {
+-                            width: 64
+-                            anchors.right: parent.right
+-                            height: parent.height
+-                            radius: Appearance.rounding.normal
+-                            color: Appearance.colors.colError
+-
+-                            MaterialSymbol {
+-                                anchors.centerIn: parent
+-                                text: "delete"
+-                                iconSize: Appearance.font.pixelSize.larger
+-                                color: Appearance.colors.colOnError
+-                            }
+-
+-                            SwipeDelegate.onClicked: Todo.deleteItem(taskCard.index)
++                        TaskButton {
++                            objectName: "edit-" + row.modelData.id
++                            text: "✎"
++                            implicitWidth: 32
++                            enabled: !Todo.busy
++                            onClicked: { root.editingId = row.modelData.id; editField.forceActiveFocus(); }
++                        }
++                        TaskButton {
++                            objectName: "delete-" + row.modelData.id
++                            text: "×"
++                            implicitWidth: 32
++                            enabled: !Todo.busy
++                            onClicked: Todo.run("delete", {id: row.modelData.id})
+                         }
+                     }
+                 }
+             }
+-
+-            // Edit
+-            ColumnLayout {
+-                id: editPage
+-                anchors { fill: parent; margins: 12 }
+-                spacing: 10
+-                visible: root.mode === "edit"
+-
+-                RowLayout {
+-                    Layout.fillWidth: true
+-                    spacing: 4
+-
+-                    Rectangle {
+-                        radius: Appearance.rounding.full
+-                        color: "transparent"
+-                        implicitWidth: 28; implicitHeight: 28
+-                        MaterialSymbol {
+-                            anchors.centerIn: parent
+-                            iconSize: Appearance.font.pixelSize.normal
+-                            text: "arrow_back"
+-                            color: Appearance.colors.colOnPrimaryContainer
+-                        }
+-                        MouseArea {
+-                            anchors.fill: parent
+-                            cursorShape: Qt.PointingHandCursor
+-                            onClicked: root.toggleFlip()
+-                        }
+-                    }
+-                    Item { Layout.fillWidth: true }
+-
+-                    ToolbarPairedFab {
+-                        Layout.rightMargin: 4
+-                        Layout.alignment: Qt.AlignVCenter
+-                        baseSize: 38
+-                        iconText: "save"
+-                        onClicked: root.saveAndBack()
+-                    }
+-                }
+-
+-                Rectangle {
+-                    Layout.fillWidth: true
+-                    Layout.fillHeight: true
+-                    radius: Appearance.rounding.normal
+-                    color: Appearance.colors.colSurfaceContainerLow
+-
+-                    TextArea {
+-                        id: editTextArea
+-                        ContextMenu.menu: StyledTextEditMenu { editor: editTextArea }
+-                        anchors.fill: parent
+-                        anchors.margins: 8
+-                        text: root.editingText
+-                        wrapMode: TextArea.Wrap
+-                        placeholderText: "Type your task..."
+-                        color: Appearance.colors.colOnLayer0
+-                        background: null
+-                        onTextChanged: root.editingText = text
+-                    }
+-                }
++        }
++        ResizeHandler {
++            anchorItem: card
++            hoverActive: root.containsMouse
++            locked: Config.options.background.widgetsLocked
++            currentWidth: root.width
++            resizeMode: "diagonal"
++            onResizedXY: (dx, dy, startWidth) => {
++                root.configEntry.width = Math.max(320, Math.min(root.scaledScreenWidth, startWidth + dx));
++                root.configEntry.height = Math.max(260, Math.min(root.scaledScreenHeight - root.y, 460 + dy));
+             }
+         }
+     }
+-}+}
+--- a/modules/ii/background/widgets/usercard/UserCardWidget.qml
++++ b/modules/ii/background/widgets/usercard/UserCardWidget.qml
+@@ -397,7 +397,7 @@
+                                 MouseArea {
+                                     anchors.fill: parent
+                                     cursorShape: Qt.PointingHandCursor
+-                                    onClicked: GlobalStates.screenLocked = true
++                                    onClicked: Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"])
+                                 }
+                             }
+ 
+@@ -691,7 +691,7 @@
+                                 MouseArea {
+                                     anchors.fill: parent
+                                     cursorShape: Qt.PointingHandCursor
+-                                    onClicked: GlobalStates.screenLocked = true
++                                    onClicked: Quickshell.execDetached(["bash", FileUtils.trimFileProtocol(Directories.config) + "/hypr/UserScripts/rice-desktop/lock.sh"])
+                                 }
+                             }
+ 
+--- a/modules/ii/background/widgets/weather/WeatherWidget.qml
++++ b/modules/ii/background/widgets/weather/WeatherWidget.qml
+@@ -1,5 +1,6 @@
+ import QtQuick
+ import QtQuick.Layouts
++import QtQuick.Controls
+ import qs
+ import qs.services
+ import qs.modules.common
+@@ -75,6 +76,7 @@
+         Loader {
+             anchors.fill: parent
+             sourceComponent: {
++                if (!Weather.city && !Weather.gpsActive) return setupPrompt
+                 if (root.sizeMode === "1x1") return oneByOneContent
+                 if (root.sizeMode === "1x2") return oneByTwoContent
+                 if (root.sizeMode === "2x2") return twoByTwoContent
+@@ -83,6 +85,16 @@
+             }
+         }
+ 
++        Component {
++            id: setupPrompt
++            ColumnLayout {
++                anchors.fill: parent
++                anchors.margins: 18
++                StyledText { text: "Set your weather city"; font.pixelSize: 18 }
++                StyledText { text: "Choose a city in Services → Weather." }
++                Button { text: "Weather settings"; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
++            }
++        }
+         // 1x1 
+         Component {
+             id: oneByOneContent
+--- a/modules/ii/bar/Bar.qml
++++ b/modules/ii/bar/Bar.qml
+@@ -17,7 +17,7 @@
+     Variants {
+         // For each monitor
+         model: {
+-            const screens = Quickshell.screens;
++            const screens = Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"));
+             const list = Config.options.bar.screenList;
+             if (!list || list.length === 0)
+                 return screens;
+--- a/modules/ii/bar/BarContent.qml
++++ b/modules/ii/bar/BarContent.qml
+@@ -293,7 +293,7 @@
+                                 Layout.fillHeight: true
+                                 source: root.getWidgetUrl(modelData)
+                                 onLoaded: {
+-                                    if (item && item.hasOwnProperty("mirrored"))
++                                    if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                         item.mirrored = root.getMirroredForIndex(root.effectiveLeftLayout, index)
+                                 }
+                             }
+@@ -340,7 +340,7 @@
+                             Layout.fillHeight: true
+                             source: root.getWidgetUrl(modelData)
+                             onLoaded: {
+-                                if (item && item.hasOwnProperty("mirrored"))
++                                if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                     item.mirrored = root.getMirroredForIndex(root.effectiveLeftLayout, index)
+                             }
+                         }
+@@ -355,7 +355,7 @@
+                         Layout.alignment: Qt.AlignVCenter
+                         source: root.getWidgetUrl(modelData)
+                         onLoaded: {
+-                            if (item && item.hasOwnProperty("mirrored"))
++                            if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                 item.mirrored = root.getMirroredForIndex(root.effectiveLeftLayout, index)
+                         }
+                     }
+@@ -457,7 +457,7 @@
+                                 Layout.fillHeight: true
+                                 source: root.getWidgetUrl(modelData)
+                                 onLoaded: {
+-                                    if (item && item.hasOwnProperty("mirrored"))
++                                    if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                         item.mirrored = root.getMirroredForIndex(root.effectiveMiddleLayout, index)
+                                 }
+                             }
+@@ -505,7 +505,7 @@
+                             Layout.fillHeight: true
+                             source: root.getWidgetUrl(modelData)
+                             onLoaded: {
+-                                if (item && item.hasOwnProperty("mirrored"))
++                                if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                     item.mirrored = root.getMirroredForIndex(root.effectiveMiddleLayout, index)
+                             }
+                         }
+@@ -519,7 +519,7 @@
+                         Layout.topMargin: Config.options.bar.bottom ? -5 : 3
+                         source: root.getWidgetUrl(modelData)
+                         onLoaded: {
+-                            if (item && item.hasOwnProperty("mirrored"))
++                            if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer")
+                                 item.mirrored = root.getMirroredForIndex(root.effectiveMiddleLayout, index)
+                         }
+                     }
+@@ -605,7 +605,7 @@
+                                 Layout.fillHeight: true
+                                 source: root.getWidgetUrl(modelData)
+                                 onLoaded: {
+-                                    if (item && item.hasOwnProperty("mirrored")) {
++                                    if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer") {
+                                         try {
+                                             item.mirrored = root.getMirroredForIndex(root.effectiveRightLayout, index);
+                                         } catch (e) {}
+@@ -643,7 +643,7 @@
+                             Layout.fillHeight: true
+                             source: root.getWidgetUrl(modelData)
+                             onLoaded: {
+-                                if (item && item.hasOwnProperty("mirrored")) {
++                                if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer") {
+                                     try {
+                                         item.mirrored = root.getMirroredForIndex(root.effectiveRightLayout, index);
+                                     } catch (e) {}
+@@ -660,7 +660,7 @@
+                         Layout.topMargin: Config.options.bar.bottom ? -5 : 3
+                         source: root.getWidgetUrl(modelData)
+                         onLoaded: {
+-                            if (item && item.hasOwnProperty("mirrored")) {
++                            if (item && item.hasOwnProperty("mirrored") && modelData === "visualizer") {
+                                 try {
+                                     item.mirrored = root.getMirroredForIndex(root.effectiveRightLayout, index);
+                                 } catch (e) {}
+--- a/modules/ii/bar/LauncherButton.qml
++++ b/modules/ii/bar/LauncherButton.qml
+@@ -1,4 +1,5 @@
+ import QtQuick
++import Quickshell
+ import qs
+ import qs.services
+ import qs.modules.common
+@@ -28,10 +29,10 @@
+         GlobalStates.overviewOpen = !GlobalStates.overviewOpen;
+     }
+ 
+-    MaterialSymbol {
++    Image {
+         anchors.centerIn: parent
+-        iconSize: 18
+-        text: "search"
+-        color: root.contentColor
++        width: 18; height: 18
++        source: Quickshell.shellPath("assets/icons/arch-symbolic.svg")
++        sourceSize: Qt.size(18, 18)
+     }
+ }--- a/modules/ii/frame/ScreenFrame.qml
++++ b/modules/ii/frame/ScreenFrame.qml
+@@ -45,7 +45,7 @@
+     }
+ 
+     Variants {
+-        model: Quickshell.screens
++        model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+ 
+         Item {
+             id: frameGroup
+--- a/modules/ii/lock/Lock.qml
++++ b/modules/ii/lock/Lock.qml
+@@ -134,7 +134,7 @@
+     }
+ 
+     Variants {
+-        model: Quickshell.screens
++        model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+         delegate: Scope {
+             required property ShellScreen modelData
+             property bool shouldPush: GlobalStates.screenLocked
+--- a/modules/ii/overview/NiriOverview.qml
++++ b/modules/ii/overview/NiriOverview.qml
+@@ -203,11 +203,11 @@
+         if (fromWs === toWs) {
+             if (toPos !== fromPos && toPos < toWsWindows.length) {
+                 var targetAddr = toWsWindows[toPos].address
+-                Hyprland.dispatch(`hl.dsp.focus({ window = "address:${targetAddr}" })`)
+-                Hyprland.dispatch(`hl.dsp.window.swap({ window = "address:${addr}" })`)
++                Hyprland.dispatch(`focuswindow address:${targetAddr}`)
++                Hyprland.dispatch(`swapwindow address:${addr}`)
+             }
+         } else {
+-            Hyprland.dispatch(`hl.dsp.window.move({ workspace = ${toWs}, follow = false, window = "address:${addr}" })`)
++            Hyprland.dispatch(`movetoworkspacesilent ${toWs},address:${addr}`)
+         }
+     }
+ 
+@@ -361,7 +361,7 @@
+                             enabled: !root.isDragging && rowItem.wsWindows.length === 0
+                             onClicked: {
+                                 GlobalStates.overviewOpen = false
+-                                Hyprland.dispatch(`hl.dsp.focus({ workspace = ${rowItem.wsId} })`)
++                                Hyprland.dispatch(`workspace ${rowItem.wsId}`)
+                             }
+                         }
+                     }
+@@ -514,10 +514,10 @@
+                                     if (!winContainer.win) return
+                                     if (event.button === Qt.LeftButton) {
+                                         GlobalStates.overviewOpen = false
+-                                        Hyprland.dispatch(`hl.dsp.focus({ window = "address:${winContainer.win.address}" })`)
++                                        Hyprland.dispatch(`focuswindow address:${winContainer.win.address}`)
+                                         event.accepted = true
+                                     } else if (event.button === Qt.MiddleButton) {
+-                                        Hyprland.dispatch(`hl.dsp.window.close({ window = "address:${winContainer.win.address}" })`)
++                                        Hyprland.dispatch(`closewindow address:${winContainer.win.address}`)
+                                         event.accepted = true
+                                     }
+                                 }
+--- a/modules/ii/overview/Overview.qml
++++ b/modules/ii/overview/Overview.qml
+@@ -212,6 +212,8 @@
+         function toggleReleaseInterrupt() {
+             GlobalStates.superReleaseMightTrigger = false;
+         }
++        function help() { GlobalStates.overviewOpen = true; Qt.callLater(() => panelWindow.setSearchingText("<")); }
++        function emojiToggle() { overviewScope.toggleEmojis(); }
+         function clipboardToggle() {
+             overviewScope.toggleClipboard();
+         }
+--- a/modules/ii/overview/OverviewWidget.qml
++++ b/modules/ii/overview/OverviewWidget.qml
+@@ -149,7 +149,7 @@
+                                 onPressed: {
+                                     if (root.draggingTargetWorkspace === -1) {
+                                         GlobalStates.overviewOpen = false
+-                                        Hyprland.dispatch(`hl.dsp.focus({ workspace = ${workspace.workspaceValue} })`)
++                                        Hyprland.dispatch(`workspace ${workspace.workspaceValue}`)
+                                     }
+                                 }
+                             }
+@@ -284,7 +284,7 @@
+                             root.draggingFromWorkspace = -1
+                             if (targetWorkspace !== -1 && targetWorkspace !== windowData?.workspace.id) {
+                                 if (!window.windowData.floating) {
+-                                    Hyprland.dispatch(`hl.dsp.window.move({ workspace = ${targetWorkspace}, follow = false, window = "address:${window.windowData?.address}" })`)
++                                    Hyprland.dispatch(`movetoworkspacesilent ${targetWorkspace},address:${window.windowData?.address}`)
+                                     // Animate non-float: predict final size (will fill workspace if alone)
+                                     const targetColIndex = getWsColumn(targetWorkspace)
+                                     const targetRowIndex = getWsRow(targetWorkspace)
+@@ -309,7 +309,7 @@
+                                     window.y = targetYOffset + (root.workspaceImplicitHeight - finalH) / 2
+                                 } else {
+                                     // Float: keep consistent screen position across workspaces
+-                                    Hyprland.dispatch(`hl.dsp.window.move({ workspace = ${targetWorkspace}, follow = false, window = "address:${window.windowData?.address}" })`)
++                                    Hyprland.dispatch(`movetoworkspacesilent ${targetWorkspace},address:${window.windowData?.address}`)
+                                     // Use captured dragStart position (most accurate) instead of initX (may be stale)
+                                     const percentageX = (window.dragStartX - xOffset) / root.workspaceImplicitWidth
+                                     const percentageY = (window.dragStartY - yOffset) / root.workspaceImplicitHeight
+@@ -336,10 +336,10 @@
+ 
+                             if (event.button === Qt.LeftButton) {
+                                 GlobalStates.overviewOpen = false
+-                                Hyprland.dispatch(`hl.dsp.focus({ window = "address:${windowData.address}" })`)
++                                Hyprland.dispatch(`focuswindow address:${windowData.address}`)
+                                 event.accepted = true
+                             } else if (event.button === Qt.MiddleButton) {
+-                                Hyprland.dispatch(`hl.dsp.window.close({ window = "address:${windowData.address}" })`)
++                                Hyprland.dispatch(`closewindow address:${windowData.address}`)
+                                 event.accepted = true
+                             }
+                         }
+--- a/modules/ii/regionSelector/RegionSelector.qml
++++ b/modules/ii/regionSelector/RegionSelector.qml
+@@ -18,7 +18,7 @@
+     property var selectionMode: RegionSelection.SelectionMode.RectCorners
+     
+     Variants {
+-        model: Quickshell.screens
++        model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+         delegate: Loader {
+             id: regionSelectorLoader
+             required property var modelData
+--- a/modules/ii/screenCorners/ScreenCorners.qml
++++ b/modules/ii/screenCorners/ScreenCorners.qml
+@@ -156,7 +156,7 @@
+     }
+ 
+     Variants {
+-        model: Quickshell.screens
++        model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+ 
+         Scope {
+             id: monitorScope
+--- a/modules/ii/settings/Dashboard.qml
++++ b/modules/ii/settings/Dashboard.qml
+@@ -15,7 +15,7 @@
+ 
+         sourceComponent: FloatingWindow {
+             id: window
+-            title: "illogical-impulse Settings"
++            title: "Desktop Settings"
+             color: Appearance.colors.colUiBackground
+ 
+             WindowGlass {
+--- a/modules/ii/settings/DashboardContent.qml
++++ b/modules/ii/settings/DashboardContent.qml
+@@ -13,6 +13,25 @@
+ 
+     signal pageExitRequested()
+ 
++    Connections {
++        target: GlobalStates
++        function onSettingsTargetChanged() {
++            if (!GlobalStates.settingsTarget) return;
++            if (root.currentPage !== root.settingsPage) root.goToPage(root.settingsPage);
++            riceTargetTimer.restart();
++        }
++    }
++    Timer {
++        id: riceTargetTimer
++        interval: 800
++        onTriggered: {
++            const target = GlobalStates.settingsTarget;
++            if (target && settingsLoader.item) {
++                settingsLoader.item.openSection(SettingsPages.byId(target.page)?.name || target.page, target.section || "");
++                GlobalStates.settingsTarget = null;
++            }
++        }
++    }
+     property int currentPage: GlobalStates.dashboardPage
+     property int pendingPage: GlobalStates.dashboardPage
+     property int staggerMs: 45 / Math.max(0.5, Config.options.settings.animationSpeed ?? 1)
+@@ -317,11 +336,11 @@
+ 
+                     IconImage {
+                         implicitSize: 22
+-                        source: Quickshell.iconPath(SystemInfo.logo)
++                        source: Quickshell.shellPath("assets/icons/arch-symbolic.svg")
+                     }
+ 
+                     StyledText {
+-                        text: SystemInfo.distroName
++                        text: "Arch Linux"
+                         font.pixelSize: Appearance.font.pixelSize.normal
+                         font.weight: Font.Medium
+                         color: ui.fgSurface
+--- a/modules/ii/settings/DashboardSettingsCatalog.qml
++++ b/modules/ii/settings/DashboardSettingsCatalog.qml
+@@ -222,6 +222,9 @@
+     })
+ 
+     readonly property var sections: [
++        { page: Translation.tr("Interface"), title: Translation.tr("Wallpaper colors"), icon: "palette", cards: [
++            { type: "riceWallpaper", title: Translation.tr("Wallpaper colors"), icon: "wallpaper" }
++        ] },
+         {
+             page: Translation.tr("Bar"), title: Translation.tr("AI Usage"), icon: "neurology", cards: [
+                 { type: "toggle", key: "bar:Claude Code", title: Translation.tr("Claude Code"), icon: "terminal", kw: "ai usage provider anthropic enable disable" },
+--- a/modules/ii/settings/DashboardSettingsPage.qml
++++ b/modules/ii/settings/DashboardSettingsPage.qml
+@@ -79,6 +79,7 @@
+     }
+ 
+     function baseSpan(type) {
++        if (type === "riceWallpaper") return [4, 2];
+         if (type === "style") return [2, 2];
+         if (type === "schemes" || type === "barpos") return [2, 2];
+         if (type === "weathermap") return [4, 2];
+@@ -102,9 +103,7 @@
+         { id: "hero:glass", type: "toggle", key: "interface:Glassy UI", title: Translation.tr("Glassy UI"), icon: "water_drop", section: Translation.tr("Interface"), kw: "glassy ui liquid glass frosted blur translucent ui panels bar sidebars dock widgets" },
+         { id: "hero:collage", type: "toggle", key: "desktop:Collage enable", title: Translation.tr("Multiple wallpapers"), icon: "grid_view", section: Translation.tr("Desktop"), kw: "multiple wallpapers collage tiles" },
+         { id: "hero:centered", type: "toggle", key: "desktop:Wallpaper/Centered wallpaper/Enable", title: Translation.tr("Centered wallpaper"), icon: "filter_center_focus", section: Translation.tr("Desktop"), kw: "centered wallpaper" },
+-        { id: "hero:schemes", type: "schemes", title: Translation.tr("Color scheme"), section: Translation.tr("Interface"), kw: "color scheme theme palette accent catppuccin gruvbox nord dracula tokyo everforest one dark" },
+         { id: "hero:uibg", type: "select", w: 2, key: "interface:UI background", title: Translation.tr("UI background"), icon: "format_color_fill", section: Translation.tr("Interface"), kw: "ui background oled black amoled themed dark surface layer panels sidebars" },
+-        { id: "hero:palette", type: "palette", when: "material", key: "interface:Palette type", title: Translation.tr("Palette style"), icon: "auto_awesome", section: Translation.tr("Interface"), kw: "palette style scheme auto content expressive fidelity fruit salad monochrome neutral rainbow tonal spot material you dynamic" },
+         { id: "hero:barpos", type: "barpos", title: Translation.tr("Bar position"), section: Translation.tr("Bar"), kw: "bar position top bottom left right vertical panel" },
+         { id: "hero:tooltips", type: "toggle", w: 2, searchable: true, key: "bar:Tooltips/Enable", title: Translation.tr("Tooltips"), icon: "tooltip", section: Translation.tr("Bar"), kw: "bar tooltips enable hover" },
+         { id: "hero:tooltipsClick", type: "toggle", w: 2, searchable: true, key: "bar:Click to show", title: Translation.tr("Click to show"), icon: "ads_click", section: Translation.tr("Bar"), kw: "bar tooltips click to show" },
+@@ -604,6 +603,7 @@
+ 
+                         active: place !== null && (modelData.kind === "header" || inView)
+                         sourceComponent: modelData.kind === "header" ? headerComponent
++                            : modelData.type === "riceWallpaper" ? riceWallpaperComponent
+                             : modelData.type === "style" ? styleComponent
+                             : modelData.type === "schemes" ? schemesComponent
+                             : modelData.type === "barpos" ? barposComponent
+@@ -691,6 +691,28 @@
+                         }
+ 
+                         Component {
++                            id: riceWallpaperComponent
++                            Rectangle {
++                                color: Appearance.colors.colLayer1
++                                radius: 20
++                                ColumnLayout {
++                                    anchors.fill: parent
++                                    anchors.margins: 20
++                                    StyledText { text: "Wallpaper colors"; font.pixelSize: 22 }
++                                    StyledText { text: "Apply wallpaper colors to your desktop and applications."; wrapMode: Text.Wrap; Layout.fillWidth: true }
++                                    RippleButtonWithIcon {
++                                        objectName: "rice-choose-wallpaper"
++                                        mainText: "Choose wallpaper"; materialIcon: "wallpaper"
++                                        onClicked: { GlobalStates.settingsOpen = false; GlobalStates.wallpaperSelectorOpen = true; }
++                                    }
++                                    RippleButtonWithIcon {
++                                        mainText: "Regenerate colors"; materialIcon: "refresh"
++                                        onClicked: SystemTheming.regenerateColors()
++                                    }
++                                }
++                            }
++                        }
++                        Component {
+                             id: styleComponent
+                             DashboardStyleCard {
+                                 anchors.fill: parent
+--- a/modules/ii/settings/SettingsContent.qml
++++ b/modules/ii/settings/SettingsContent.qml
+@@ -179,10 +179,10 @@
+                         buttonText: justCopied ? Translation.tr("Path copied") : Translation.tr("Config file")
+                         expanded: navRail.expanded
+                         downAction: () => {
+-                            Qt.openUrlExternally(`${Directories.config}/illogical-impulse/config.json`);
++                            Qt.openUrlExternally(`${Directories.config}/hyprland-rice/end4/config.json`);
+                         }
+                         altAction: () => {
+-                            Quickshell.clipboardText = CF.FileUtils.trimFileProtocol(`${Directories.config}/illogical-impulse/config.json`);
++                            Quickshell.clipboardText = CF.FileUtils.trimFileProtocol(`${Directories.config}/hyprland-rice/end4/config.json`);
+                             fab.justCopied = true;
+                             revertTextTimer.restart()
+                         }
+--- a/modules/ii/settings/pages/HyprlandConfig.qml
++++ b/modules/ii/settings/pages/HyprlandConfig.qml
+@@ -12,35 +12,7 @@
+     id: page
+     forceWidth: true
+ 
+-    Component.onCompleted: {
+-        HyprlandOptions.refresh()
+-        const h = Config.options.hyprland
+-        // One setMany for everything: separate calls would be separate
+-        // processes racing to rewrite the same overrides file.
+-        HyprlandConfig.setMany(Object.assign({
+-            "decoration:rounding":                  h.decoration.rounding,
+-            "decoration:blur:enabled":              h.decoration.blur.enabled ? 1 : 0,
+-            "decoration:blur:size":                 h.decoration.blur.size,
+-            "decoration:blur:passes":               h.decoration.blur.passes,
+-            "decoration:active_opacity":            h.decoration.activeOpacity,
+-            "decoration:inactive_opacity":          h.decoration.inactiveOpacity,
+-            "general:border_size":                  h.general.borderSize,
+-            "general:gaps_in":                      h.general.gapsIn,
+-            "general:gaps_out":                     h.general.gapsOut,
+-            "general:layout":                       h.general.layout,
+-            "animations:enabled":                   h.animations.enable ? 1 : 0,
+-            "input:kb_layout":                      h.input.kbLayout,
+-            "input:numlock_by_default":             h.input.numlock ? 1 : 0,
+-            "input:repeat_delay":                   h.input.repeatDelay,
+-            "input:repeat_rate":                    h.input.repeatRate,
+-            "input:follow_mouse":                   h.input.followMouse,
+-            "input:touchpad:natural_scroll":        h.input.touchpad.naturalScroll ? 1 : 0,
+-            "input:touchpad:disable_while_typing":  h.input.touchpad.disableWhileTyping ? 1 : 0,
+-            "input:touchpad:clickfinger_behavior":  h.input.touchpad.clickfingerBehavior ? 1 : 0,
+-            "input:touchpad:scroll_factor":         h.input.touchpad.scrollFactor,
+-            "misc:focus_on_activate":               h.misc.focusOnActivate ? 1 : 0
+-        }, HyprlandConfig.borderColorEntries()))
+-    }
++    Component.onCompleted: HyprlandOptions.refresh()
+     MonitorConfigOption { id: monitorConfig }
+ 
+     // Same roles as the settings panel border color on the Interface page.
+@@ -450,7 +422,7 @@
+                         text: Translation.tr("Keyboard layout")
+                         placeholderText: Translation.tr("e.g., us, es, latam")
+                         Component.onCompleted: value = Config.options.hyprland.input.kbLayout
+-                        onValueChanged: kbLayoutDebounceTimer.restart()
++                        onValueChanged: if (kbLayoutField.textArea.activeFocus) kbLayoutDebounceTimer.restart()
+ 
+                         Timer {
+                             id: kbLayoutDebounceTimer
+@@ -1209,7 +1181,7 @@
+             NoticeBox {
+                 Layout.fillWidth: true
+                 Layout.topMargin: 15
+-                text: Translation.tr("Animation presets require a require line in your hyprland.lua. Add the following line to enable presets:") + '\n\nrequire("hyprland/shellOverrides/animations")'
++                text: Translation.tr("Animation presets open the installed JaKooLit animation menu.") + '\n\nrequire("hyprland/shellOverrides/animations")'
+ 
+                 Item { Layout.fillWidth: true }
+ 
+@@ -1238,7 +1210,7 @@
+ 
+             Process {
+                 id: saveAnimProc
+-                onRunningChanged: if (!running) reloadAnimProc.running = true
++                onExited: (code, status) => { if (code === 0) reloadAnimProc.running = true; }
+             }
+             Process {
+                 id: reloadAnimProc
+--- a/modules/ii/settings/pages/InterfaceConfig.qml
++++ b/modules/ii/settings/pages/InterfaceConfig.qml
+@@ -16,105 +16,18 @@
+         spacing: 20
+ 
+         ContentSection {
++            title: Translation.tr("Wallpaper colors")
+             icon: "palette"
+-            shape: MaterialShape.Shape.Cookie9Sided
+-            title: Translation.tr("Color Schemes")
+-
+-            GroupedList {
+-                ConfigComboBox {
+-                    Layout.fillWidth: true
+-                    buttonIcon: "format_paint"
+-                    text: Translation.tr("Color scheme")
+-                    description: Translation.tr("Material follows your wallpaper")
+-                    fieldWidth: 220
+-                    fixedWidth: true
+-                    model: ColorSchemes.schemeOptions()
+-                    currentValue: ColorSchemes.current
+-                    onSelected: newValue => ColorSchemes.setScheme(newValue)
+-                }
+-                RowLayout {
+-                    enabled: ColorSchemes.currentData !== null
+-                    opacity: enabled ? 1 : 0.55
+-                    Layout.fillWidth: true
+-                    Layout.leftMargin: 8
+-                    Layout.rightMargin: 8
+-                    spacing: 10
+-                    MaterialSymbol {
+-                        text: "brush"
+-                        iconSize: Appearance.font.pixelSize.normal + 5
+-                        color: Appearance.colors.colOnLayer0
+-                    }
+-                    StyledText {
+-                        text: Translation.tr("Accent")
+-                        color: Appearance.colors.colOnLayer0
+-                    }
+-                    Item { Layout.fillWidth: true }
+-                    CustomColorSelectionArray {
+-                        spacing: 4
+-                        swatchSize: 36
+-                        options: ColorSchemes.accentOptions()
+-                        currentValue: ColorSchemes.currentAccent("primary")
+-                        onSelected: newValue => ColorSchemes.setAccent("primary", newValue)
+-                    }
+-                }
+-                RowLayout {
+-                    enabled: ColorSchemes.currentData !== null
+-                    opacity: enabled ? 1 : 0.55
+-                    Layout.fillWidth: true
+-                    Layout.leftMargin: 8
+-                    Layout.rightMargin: 8
+-                    spacing: 10
+-                    MaterialSymbol {
+-                        text: "colors"
+-                        iconSize: Appearance.font.pixelSize.normal + 5
+-                        color: Appearance.colors.colOnLayer0
+-                    }
+-                    StyledText {
+-                        text: Translation.tr("Secondary")
+-                        color: Appearance.colors.colOnLayer0
+-                    }
+-                    Item { Layout.fillWidth: true }
+-                    CustomColorSelectionArray {
+-                        spacing: 4
+-                        swatchSize: 36
+-                        options: ColorSchemes.accentOptions()
+-                        currentValue: ColorSchemes.currentAccent("secondary")
+-                        onSelected: newValue => ColorSchemes.setAccent("secondary", newValue)
+-                    }
+-                }
+-                RowLayout {
+-                    Layout.fillWidth: true
+-                    Layout.leftMargin: 8
+-                    Layout.rightMargin: 8
+-                    spacing: 8
+-                    RippleButtonWithIcon {
+-                        Layout.fillWidth: true
+-                        materialIcon: "add"
+-                        mainText: Translation.tr("Add scheme")
+-                        onClicked: ColorSchemes.addScheme()
+-                        colBackground: Appearance.colors.colSecondaryContainer
+-                        colBackgroundHover: Appearance.colors.colSecondaryContainerHover
+-                        colRipple: Appearance.colors.colSecondaryContainerActive
+-                    }
+-                    RippleButtonWithIcon {
+-                        Layout.fillWidth: true
+-                        materialIcon: "folder_open"
+-                        mainText: Translation.tr("Open folder")
+-                        onClicked: ColorSchemes.openFolder()
+-                        colBackground: Appearance.colors.colSecondaryContainer
+-                        colBackgroundHover: Appearance.colors.colSecondaryContainerHover
+-                        colRipple: Appearance.colors.colSecondaryContainerActive
+-                    }
+-                    RippleButtonWithIcon {
+-                        Layout.fillWidth: true
+-                        materialIcon: "refresh"
+-                        mainText: Translation.tr("Reload")
+-                        onClicked: ColorSchemes.reload()
+-                        colBackground: Appearance.colors.colSecondaryContainer
+-                        colBackgroundHover: Appearance.colors.colSecondaryContainerHover
+-                        colRipple: Appearance.colors.colSecondaryContainerActive
+-                    }
+-                }
++            StyledText { text: "Choose a wallpaper to update desktop and application colors."; wrapMode: Text.Wrap; Layout.fillWidth: true }
++            RippleButtonWithIcon {
++                mainText: "Choose wallpaper"
++                materialIcon: "wallpaper"
++                onClicked: { GlobalStates.settingsOpen = false; GlobalStates.wallpaperSelectorOpen = true; }
++            }
++            RippleButtonWithIcon {
++                mainText: "Regenerate wallpaper colors"
++                materialIcon: "refresh"
++                onClicked: SystemTheming.regenerateColors()
+             }
+         }
+ 
+--- a/modules/ii/sidebarLeft/SidebarLeft.qml
++++ b/modules/ii/sidebarLeft/SidebarLeft.qml
+@@ -321,7 +321,7 @@
+ 
+         sourceComponent: FloatingWindow {
+             id: detachedSidebarRoot
+-            title: "illogical-impulse Sidebar"
++            title: "hyprland-rice/end4 Sidebar"
+             property var contentParent: detachedSidebarBackground
+             color: "transparent"
+ 
+--- a/panelFamilies/IllogicalImpulseFamily.qml
++++ b/panelFamilies/IllogicalImpulseFamily.qml
+@@ -33,14 +33,14 @@
+     PanelLoader { component: Background {} }
+     PanelLoader { extraCondition: Config.options.dock.enable; component: Dock {} }
+     PanelLoader { component: EqualizerPopup {} }
+-    PanelLoader { component: Lock {} }
++    // hyprlock remains the session lock.
+     PanelLoader { component: MediaControls {} }
+     PanelLoader { component: NotificationPopup {} }
+     PanelLoader { component: OnScreenDisplay {} }
+     PanelLoader { component: OnScreenKeyboard {} }
+     PanelLoader { component: Overlay {} }
+     PanelLoader { component: Overview {} }
+-    PanelLoader { component: Polkit {} }
++    // Keep the existing session polkit agent.
+     PanelLoader { component: RegionSelector {} }
+     PanelLoader { component: ScreenCorners {} }
+     PanelLoader { component: ScreenTranslator {} }
+--- a/scripts/ai/gemini-categorize-wallpaper.sh
++++ b/scripts/ai/gemini-categorize-wallpaper.sh
+@@ -26,7 +26,7 @@
+ esac
+ 
+ # Get API key
+-API_KEY=$(secret-tool lookup 'application' 'illogical-impulse' | jq -r '.apiKeys.gemini')
++API_KEY=$(secret-tool lookup 'application' 'hyprland-rice/end4' | jq -r '.apiKeys.gemini')
+ 
+ # Encode image to base64
+ if [[ "$(base64 --version 2>&1)" = *"FreeBSD"* ]]; then
+--- a/scripts/ai/gemini-translate.sh
++++ b/scripts/ai/gemini-translate.sh
+@@ -10,7 +10,7 @@
+ # shellcheck source=../lib/config.sh
+ source "$SCRIPT_DIR/../lib/config.sh"
+ XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+-SHELL_CONFIG_DIR="$XDG_CONFIG_HOME/illogical-impulse"
++SHELL_CONFIG_DIR="$XDG_CONFIG_HOME/hyprland-rice/end4"
+ SHELL_CONFIG_FILE="${SHELL_CONFIG_DIR}/config.json"
+ TRANSLATIONS_DIR="${SCRIPT_DIR}/../../translations"
+ TRANSLATIONS_TARGET_DIR="${SHELL_CONFIG_DIR}/translations"
+@@ -29,7 +29,7 @@
+     exit 1
+ }
+ 
+-API_KEY=$(secret-tool lookup 'application' 'illogical-impulse' | jq -r '.apiKeys.gemini // empty')
++API_KEY=$(secret-tool lookup 'application' 'hyprland-rice/end4' | jq -r '.apiKeys.gemini // empty')
+ [[ -z "$API_KEY" ]] && fail "No Gemini API key found. Add it in Settings > Services > AI, then try again."
+ 
+ OUTPUT_FILE="${TRANSLATIONS_TARGET_DIR}/${TARGET_LOCALE}.json"
+--- a/scripts/colors/applycolor.sh
++++ b/scripts/colors/applycolor.sh
+@@ -89,7 +89,7 @@
+ }
+ 
+ # Check if terminal theming is enabled in config
+-CONFIG_FILE="$XDG_CONFIG_HOME/illogical-impulse/config.json"
++CONFIG_FILE="$XDG_CONFIG_HOME/hyprland-rice/end4/config.json"
+ if [ -f "$CONFIG_FILE" ]; then
+   enable_terminal=$(jq -r '.appearance.wallpaperTheming.enableTerminal' "$CONFIG_FILE")
+   if [ "$enable_terminal" = "true" ]; then
+--- a/scripts/colors/named_scheme.py
++++ b/scripts/colors/named_scheme.py
+@@ -7,7 +7,7 @@
+ from pathlib import Path
+ 
+ SCHEMES_DIR = Path(__file__).resolve().parent / "schemes"
+-USER_SCHEMES_DIR = Path.home() / ".config/illogical-impulse/schemes"
++USER_SCHEMES_DIR = Path.home() / ".config/hyprland-rice/end4/schemes"
+ 
+ HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+ SURFACE_KEYS = [
+--- a/scripts/colors/random/random_konachan_wall.sh
++++ b/scripts/colors/random/random_konachan_wall.sh
+@@ -29,7 +29,7 @@
+ 
+ mkdir -p "$PICTURES_DIR/Wallpapers"
+ page=$((1 + RANDOM % 1000));
+-illogicalImpulseConfigPath="$HOME/.config/illogical-impulse/config.json"
++illogicalImpulseConfigPath="$HOME/.config/hyprland-rice/end4/config.json"
+ userAgent=$(jq -r '.networking.userAgent // empty' "$illogicalImpulseConfigPath" 2>/dev/null)
+ response=$(curl -A "$userAgent" "https://konachan.net/post.json?tags=rating%3Asafe&limit=1&page=$page")
+ link=$(echo "$response" | jq '.[0].file_url' -r);
+--- a/scripts/colors/random/random_osu_wall.sh
++++ b/scripts/colors/random/random_osu_wall.sh
+@@ -35,7 +35,7 @@
+ link=$(echo "$response" | jq ".backgrounds[$randomIndex].url" -r)
+ ext=$(echo "$link" | awk -F. '{print $NF}')
+ downloadPath="$PICTURES_DIR/Wallpapers/random_wallpaper.$ext"
+-illogicalImpulseConfigPath="$HOME/.config/illogical-impulse/config.json"
++illogicalImpulseConfigPath="$HOME/.config/hyprland-rice/end4/config.json"
+ currentWallpaperPath=$(jq -r '.background.wallpaperPath' $illogicalImpulseConfigPath)
+ if [ "$downloadPath" == "$currentWallpaperPath" ]; then
+     downloadPath="$PICTURES_DIR/Wallpapers/random_wallpaper-1.$ext"
+--- a/scripts/colors/schemes/_template.json
++++ b/scripts/colors/schemes/_template.json
+@@ -1,5 +1,5 @@
+ {
+-    "_help": "Copy this file, rename it, edit the values and drop it in ~/.config/illogical-impulse/schemes/ (or use Settings > Interface > Color Schemes > Add scheme). All colors are #RRGGBB. See README.md in this folder.",
++    "_help": "Copy this file, rename it, edit the values and drop it in ~/.config/hyprland-rice/end4/schemes/ (or use Settings > Interface > Color Schemes > Add scheme). All colors are #RRGGBB. See README.md in this folder.",
+     "name": "My scheme",
+     "defaults": {
+         "primary": "cyan",
+--- a/scripts/colors/switchwall.sh
++++ b/scripts/colors/switchwall.sh
+@@ -8,7 +8,7 @@
+ CACHE_DIR="$XDG_CACHE_HOME/quickshell"
+ STATE_DIR="$XDG_STATE_HOME/quickshell"
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-SHELL_CONFIG_FILE="$XDG_CONFIG_HOME/illogical-impulse/config.json"
++SHELL_CONFIG_FILE="$XDG_CONFIG_HOME/hyprland-rice/end4/config.json"
+ MATUGEN_DIR="$XDG_CONFIG_HOME/matugen"
+ terminalscheme="$SCRIPT_DIR/terminal/scheme-base.json"
+ 
+--- a/scripts/eq/equalizer.sh
++++ b/scripts/eq/equalizer.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ #
+-# Live 10-band equalizer backend for illogical-impulse / end-4's pC fork,
++# Live 10-band equalizer backend for hyprland-rice/end4 / end-4's pC fork,
+ # ported from ilyaMiro's Serpantinum shell.
+ #
+ # It writes a 32-band EasyEffects "Equalizer" preset (only 10 of the bands
+--- a/scripts/hyprland/autostart.py
++++ b/scripts/hyprland/autostart.py
+@@ -6,7 +6,7 @@
+ import time
+ 
+ LOCK_FILE = "/tmp/qs-autostart.lock"
+-CONFIG_FILE = os.path.join(os.environ["HOME"], ".config", "illogical-impulse", "config.json")
++CONFIG_FILE = os.path.join(os.environ["HOME"], ".config", "hyprland-rice/end4", "config.json")
+ force = "--force" in sys.argv
+ 
+ 
+--- a/scripts/images/find-regions-venv.sh
++++ b/scripts/images/find-regions-venv.sh
+@@ -1,6 +1,4 @@
+ #!/usr/bin/env bash
+-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-
+-source $(eval echo $ILLOGICAL_IMPULSE_VIRTUAL_ENV)/bin/activate
+-"$SCRIPT_DIR/find_regions.py" "$@"
+-deactivate
++set -euo pipefail
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++exec /usr/bin/python3 "$SCRIPT_DIR/find_regions.py" "$@"
+--- a/scripts/images/least-busy-region-venv.sh
++++ b/scripts/images/least-busy-region-venv.sh
+@@ -1,6 +1,4 @@
+ #!/usr/bin/env bash
+-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-
+-source $(eval echo $ILLOGICAL_IMPULSE_VIRTUAL_ENV)/bin/activate
+-"$SCRIPT_DIR/least_busy_region.py" "$@"
+-deactivate
++set -euo pipefail
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++exec /usr/bin/python3 "$SCRIPT_DIR/least_busy_region.py" "$@"
+--- a/scripts/images/text-color-venv.sh
++++ b/scripts/images/text-color-venv.sh
+@@ -1,6 +1,4 @@
+ #!/usr/bin/env bash
+-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-
+-source $(eval echo $ILLOGICAL_IMPULSE_VIRTUAL_ENV)/bin/activate
+-"$SCRIPT_DIR/text_color.py" "$@"
+-deactivate
++set -euo pipefail
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++exec /usr/bin/python3 "$SCRIPT_DIR/text_color.py" "$@"
+--- a/scripts/keyring/try_lookup.sh
++++ b/scripts/keyring/try_lookup.sh
+@@ -2,7 +2,7 @@
+ 
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ 
+-data=$(secret-tool lookup 'application' 'illogical-impulse')
++data=$(secret-tool lookup 'application' 'hyprland-rice/end4')
+ if [[ -z "$data" ]]; then
+     if "${SCRIPT_DIR}/is_unlocked.sh"; then
+         echo 'not found'
+--- a/scripts/presets.sh
++++ b/scripts/presets.sh
+@@ -8,7 +8,7 @@
+ #   presets.sh --export-zip <name>
+ #   presets.sh --import-zip <zip_path>
+ 
+-CONFIG_DIR="$HOME/.config/illogical-impulse"
++CONFIG_DIR="$HOME/.config/hyprland-rice/end4"
+ CONFIG_FILE="$CONFIG_DIR/config.json"
+ LOCAL_PRESETS_DIR="$CONFIG_DIR/presets"
+ ONLINE_PRESETS_DIR="$HOME/.cache/quickshell/presets"
+--- a/scripts/theming/icon-theme-manager.sh
++++ b/scripts/theming/icon-theme-manager.sh
+@@ -21,7 +21,7 @@
+ DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+ STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+ 
+-SHELL_CONFIG="${ICON_MANAGER_CONFIG:-$CONFIG_HOME/illogical-impulse/config.json}"
++SHELL_CONFIG="${ICON_MANAGER_CONFIG:-$CONFIG_HOME/hyprland-rice/end4/config.json}"
+ KMYC_CONFIG="${ICON_MANAGER_KMYC_CONFIG:-$CONFIG_HOME/kde-material-you-colors/config.conf}"
+ ICONS_DIR="${ICON_MANAGER_ICONS_DIR:-$DATA_HOME/icons}"
+ STATE_DIR="${ICON_MANAGER_STATE_DIR:-$STATE_HOME/quickshell/user/generated/icons}"
+--- a/scripts/thumbnails/thumbgen-venv.sh
++++ b/scripts/thumbnails/thumbgen-venv.sh
+@@ -1,9 +1,4 @@
+ #!/usr/bin/env bash
+-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-
+-source $(eval echo $ILLOGICAL_IMPULSE_VIRTUAL_ENV)/bin/activate
+-GIO_USE_VFS=local "$SCRIPT_DIR/thumbgen.py" "$@"
+-THUMBGEN_EXIT_CODE=$?
+-deactivate
+-
+-exit $THUMBGEN_EXIT_CODE
++set -euo pipefail
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++exec /usr/bin/python3 "$SCRIPT_DIR/thumbgen.py" "$@"
+--- a/scripts/videos/record.sh
++++ b/scripts/videos/record.sh
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env bash
+-CONFIG_FILE="$HOME/.config/illogical-impulse/config.json"
++CONFIG_FILE="$HOME/.config/hyprland-rice/end4/config.json"
+ JSON_PATH=".screenRecord.savePath"
+ CUSTOM_PATH=$(jq -r "$JSON_PATH" "$CONFIG_FILE" 2>/dev/null)
+ RECORDING_DIR=""
+--- a/services/Brightness.qml
++++ b/services/Brightness.qml
+@@ -194,7 +194,7 @@
+         return (6.600135 + 216.360356 * Math.pow(Math.E, -0.0811129189 * x)) / 100.0;
+     }
+     Variants {
+-        model: Quickshell.screens
++        model: Quickshell.screens.filter(s => !Quickshell.env("RICE_TEST_OUTPUT") || s.name === Quickshell.env("RICE_TEST_OUTPUT"))
+         Scope {
+             id: screenScope
+             required property var modelData
+--- a/services/DotsUpdater.qml
++++ b/services/DotsUpdater.qml
+@@ -1,42 +1,11 @@
+ pragma Singleton
+-
+-import qs
+ import QtQuick
+ import Quickshell
+-
+ Singleton {
+-    id: root
+-
+     function runSystemUpdate() {
+-        Quickshell.execDetached([
+-            "kitty", "--hold",
+-            "fish", "-i", "-l", "-c",
+-            "if type -q yay; yay -Syu --combinedupgrade=false; else if type -q paru; paru -Syu; else; sudo pacman -Syu; end"
+-        ])
+-        Qt.callLater(() => GlobalStates.settingsOpen = false)
++        Quickshell.execDetached(["kitty", "--hold", "python3", Quickshell.shellPath("integration/host.py"), "update"])
+     }
+-
+     function runUpdateDots() {
+-        const updateScript = `
+-            set -e
+-            DIR="$HOME/.config/quickshell"
+-
+-            rm -rf "$DIR/end4-pC-tmp"
+-            git clone https://github.com/pctrade/end4-pC.git "$DIR/end4-pC-tmp"
+-
+-            rm -rf "$DIR/end4-pC-old"
+-            [ -d "$DIR/end4-pC" ] && mv "$DIR/end4-pC" "$DIR/end4-pC-old"
+-            mv "$DIR/end4-pC-tmp" "$DIR/end4-pC"
+-
+-            killall qs 2>/dev/null || true
+-            sleep 0.5
+-            setsid qs -c end4-pC >/tmp/qs.log 2>&1 < /dev/null &
+-            disown
+-
+-            rm -rf "$DIR/end4-pC-old"
+-        `
+-
+-        Quickshell.execDetached(["kitty", "--hold", "bash", "-c", updateScript])
+-        Qt.callLater(() => GlobalStates.settingsOpen = false)
++        Quickshell.execDetached(["notify-send", "Pinned shell", "Update the integration checkout and rebuild with scripts/install.py. Your rollback profile is retained."])
+     }
+ }
+--- a/services/HyprlandBackend.qml
++++ b/services/HyprlandBackend.qml
+@@ -14,7 +14,7 @@
+     property var focusedMonitor: Hyprland.focusedMonitor
+ 
+     function switchWorkspaceRelative(direction) {
+-        Hyprland.dispatch(`hl.dsp.focus({workspace = "r${direction === "next" ? "+1" : "-1"}"})`);
++        Hyprland.dispatch(`workspace r${direction === "next" ? "+1" : "-1"}`);
+     }
+     function normalizeWindow(w) {
+         return {
+@@ -28,16 +28,16 @@
+     }
+ 
+     function focusWindow(id) {
+-        Hyprland.dispatch(`hl.dsp.focus({ window = "address:${id}" })`);
++        Hyprland.dispatch(`focuswindow address:${id}`);
+     }
+     function closeWindow(id) {
+-        Hyprland.dispatch(`hl.dsp.window.close({ window = "address:${id}" })`);
++        Hyprland.dispatch(`closewindow address:${id}`);
+     }
+     function switchWorkspace(id) {
+-        Hyprland.dispatch(`hl.dsp.focus({ workspace = ${id} })`);
++        Hyprland.dispatch(`workspace ${id}`);
+     }
+     function moveWindowToWorkspace(id, wsId) {
+-        Hyprland.dispatch(`hl.dsp.window.move({ workspace = ${wsId}, follow = false, window = "address:${id}" })`);
++        Hyprland.dispatch(`movetoworkspacesilent ${wsId},address:${id}`);
+     }
+ 
+     function monitorFor(screen) {
+--- a/services/HyprlandConfig.qml
++++ b/services/HyprlandConfig.qml
+@@ -11,8 +11,8 @@
+     id: root
+     signal reloaded()
+ 
+-    readonly property string configuratorScriptPath: Quickshell.shellPath("scripts/hyprland/hyprconfigurator.py")
+-    readonly property string shellOverridesPath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/hyprland/shellOverrides/main.lua`)
++    readonly property string configuratorScriptPath: Quickshell.shellPath("integration/hypr_config.py")
++    readonly property string shellOverridesPath: FileUtils.trimFileProtocol(`${Directories.shellConfig}/hyprland.conf`)
+     readonly property string animOverridesPath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/hyprland/shellOverrides/animations.lua`)
+     readonly property string idleConfiguratorScriptPath: Quickshell.shellPath("scripts/hyprland/hypridleconfigurator.py")
+     readonly property string hypridlePath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/hypridle.conf`)
+--- a/services/HyprlandKeybinds.qml
++++ b/services/HyprlandKeybinds.qml
+@@ -1,72 +1,17 @@
+ pragma Singleton
+-pragma ComponentBehavior: Bound
+-
+-import qs.modules.common
+-import qs.modules.common.functions
+ import QtQuick
+ import Quickshell
+ import Quickshell.Io
+ import Quickshell.Hyprland
+-
+-/**
+- * A service that provides access to Hyprland keybinds.
+- * Uses the `get_keybinds.py` script to parse comments in config files in a certain format and convert to JSON.
+- */
+ Singleton {
+     id: root
+-    property string keybindParserPath: FileUtils.trimFileProtocol(`${Directories.scriptPath}/hyprland/get_keybinds.py`)
+-    property string defaultKeybindConfigPath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/hyprland/keybinds.lua`)
+-    property string userKeybindConfigPath: FileUtils.trimFileProtocol(`${Directories.config}/hypr/custom/keybinds.lua`)
+-    property var defaultKeybinds: {"children": []}
+-    property var userKeybinds: {"children": []}
+-    property var keybinds: ({
+-        children: [
+-            ...(defaultKeybinds.children ?? []),
+-            ...(userKeybinds.children ?? []),
+-        ]
+-    })
+-
+-    Connections {
+-        target: Hyprland
+-
+-        function onRawEvent(event) {
+-            if (event.name == "configreloaded") {
+-                getDefaultKeybinds.running = true
+-                getUserKeybinds.running = true
+-            }
+-        }
+-    }
+-
++    property var keybinds: ({children: []})
++    function refresh() { reader.running = true; }
++    Component.onCompleted: refresh()
++    Connections { target: Hyprland; function onRawEvent(event) { if (event.name === "configreloaded") root.refresh(); } }
+     Process {
+-        id: getDefaultKeybinds
+-        running: true
+-        command: [root.keybindParserPath, "--path", root.defaultKeybindConfigPath]
+-        
+-        stdout: SplitParser {
+-            onRead: data => {
+-                try {
+-                    root.defaultKeybinds = JSON.parse(data)
+-                } catch (e) {
+-                    console.error("[CheatsheetKeybinds] Error parsing keybinds:", e)
+-                }
+-            }
+-        }
+-    }
+-
+-    Process {
+-        id: getUserKeybinds
+-        running: true
+-        command: [root.keybindParserPath, "--path", root.userKeybindConfigPath]
+-        
+-        stdout: SplitParser {
+-            onRead: data => {
+-                try {
+-                    root.userKeybinds = JSON.parse(data)
+-                } catch (e) {
+-                    console.error("[CheatsheetKeybinds] Error parsing keybinds:", e)
+-                }
+-            }
+-        }
++        id: reader
++        command: ["/usr/bin/python3", Quickshell.shellPath("integration/shortcuts.py")]
++        stdout: StdioCollector { onStreamFinished: { try { root.keybinds = JSON.parse(text); } catch (e) { console.warn("Cannot read effective keybindings"); } } }
+     }
+ }
+-
+--- a/services/KeyringStorage.qml
++++ b/services/KeyringStorage.qml
+@@ -21,7 +21,7 @@
+     property var keyringData: ({})
+     
+     property var properties: {
+-        "application": "illogical-impulse",
++        "application": "hyprland-rice/end4",
+         "explanation": Translation.tr("For storing API keys and other sensitive information"),
+     }
+     property var propertiesAsArgs: Object.keys(root.properties).reduce(
+@@ -29,7 +29,7 @@
+             return arr.concat([key, root.properties[key]]);
+         }, []
+     )
+-    property string keyringLabel: Translation.tr("%1 Safe Storage").arg("illogical-impulse")
++    property string keyringLabel: Translation.tr("%1 Safe Storage").arg("hyprland-rice/end4")
+ 
+     function setNestedField(path, value) {
+         if (!root.keyringData) root.keyringData = {};
+--- a/services/LauncherSearch.qml
++++ b/services/LauncherSearch.qml
+@@ -35,7 +35,7 @@
+         return acc;
+     }, []).sort()
+ 
+-    // Load user action scripts from ~/.config/illogical-impulse/actions/
++    // Load user action scripts from ~/.config/hyprland-rice/end4/actions/
+     // Uses FolderListModel to auto-reload when scripts are added/removed
+     property var userActionScripts: {
+         const actions = [];
+@@ -111,7 +111,7 @@
+         {
+             action: "wallpaper",
+             execute: () => {
+-                Hyprland.dispatch(`hl.dsp.global("quickshell:wallpaperSelectorToggle")`)
++                Hyprland.dispatch(`global quickshell:wallpaperSelectorToggle`)
+             }
+         },
+         {
+--- a/services/MaterialThemeLoader.qml
++++ b/services/MaterialThemeLoader.qml
+@@ -21,7 +21,12 @@
+     }
+ 
+     function applyColors(fileContent) {
+-        const json = JSON.parse(fileContent)
++        let json;
++        try { json = JSON.parse(fileContent); } catch (e) { return; }
++        if (!json || !json.primary || !json.background) return;
++        for (const value of Object.values(json)) {
++            if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value)) return;
++        }
+         for (const key in json) {
+             if (json.hasOwnProperty(key)) {
+                 // Convert snake_case to CamelCase
+@@ -33,7 +38,7 @@
+         Appearance.m3colors.darkmode = (Appearance.m3colors.m3background.hslLightness < 0.5)
+         // Custom window border colors are stored as palette roles, so they
+         // have to be pushed to Hyprland again whenever the palette changes.
+-        HyprlandConfig.applyBorderColors()
++        // Keep JaKooLit window borders.
+     }
+ 
+     function resetFilePathNextTime() {
+--- a/services/SystemInfo.qml
++++ b/services/SystemInfo.qml
+@@ -83,7 +83,7 @@
+                 case "endeavouros": distroIcon = "endeavouros-symbolic"; break
+                 case "cachyos":     distroIcon = "cachyos-symbolic"; break
+                 case "nixos":       distroIcon = "nixos-symbolic"; break
+-                case "fedora":      distroIcon = "fedora-symbolic"; break
++                case "fedora":      distroIcon = "arch-symbolic"; break
+                 case "linuxmint":
+                 case "ubuntu":
+                 case "zorin":
+@@ -198,7 +198,7 @@
+     Process {
+         id: getPackages
+         running: false
+-        command: ["bash", "-c", "pacman_count=$(pacman -Q | wc -l); flatpak_count=$(flatpak list 2>/dev/null | wc -l || echo 0); if [ \"$flatpak_count\" -gt 0 ]; then echo \"$pacman_count pacman, $flatpak_count fp\"; else echo \"$pacman_count pacman\"; fi"]
++        command: ["python3", Quickshell.shellPath("integration/host.py"), "count"]
+         stdout: SplitParser { onRead: data => root.packages = data.trim() }
+     }
+ 
+--- a/services/Todo.qml
++++ b/services/Todo.qml
+@@ -1,86 +1,59 @@
+ pragma Singleton
+-pragma ComponentBehavior: Bound
+-
+-import qs.modules.common
+-import Quickshell;
+-import Quickshell.Io;
+-import QtQuick;
+-
+-/**
+- * Simple to-do list manager.
+- * Each item is an object with "content" and "done" properties.
+- */
++import QtQuick
++import Quickshell
++import Quickshell.Io
+ Singleton {
+     id: root
+-    property var filePath: Directories.todoPath
+     property var list: []
+-    
+-    function addItem(item) {
+-        list.push(item)
+-        // Reassign to trigger onListChanged
+-        root.list = list.slice(0)
+-        todoFileView.setText(JSON.stringify(root.list))
++    property var deleted: null
++    property string error: ""
++    property bool busy: false
++    property string pending: ""
++    function transact(action, payload) {
++        if (busy) return false;
++        busy = true;
++        pending = action;
++        worker.responseReady = false;
++        worker.exited = false;
++        worker.response = null;
++        worker.command = ["python3", Quickshell.shellPath("integration/tasks.py"), action, payload];
++        worker.running = true;
++        return true;
+     }
+-
+-    function addTask(desc) {
+-        const item = {
+-            "content": desc,
+-            "done": false,
++    function run(action, payload) { return transact(action, JSON.stringify(payload || {})); }
++    function addTask(text) { return run("add", {text: text}); }
++    function markDone(index) { if (list[index] && !list[index].done) return run("toggle", {id: list[index].id}); return false; }
++    function markUnfinished(index) { if (list[index] && list[index].done) return run("toggle", {id: list[index].id}); return false; }
++    function deleteItem(index) { return list[index] ? run("delete", {id: list[index].id}) : false; }
++    function edit(id, text) { return run("edit", {id: id, text: text}); }
++    function undo() { return deleted ? run("restore", deleted) : false; }
++    function refresh() { return run("list", {}); }
++    Component.onCompleted: refresh()
++    function finish() {
++        if (!worker.responseReady || !worker.exited) return;
++        const result = worker.response;
++        if (!result || !result.ok) {
++            root.error = result?.error || "Could not read tasks. The saved file is preserved.";
++        } else {
++            root.list = result.tasks.map(t => Object.assign({}, t, {content: t.text}));
++            root.error = "";
++            if (root.pending === "delete") root.deleted = result.deleted;
++            if (root.pending === "restore") root.deleted = null;
+         }
+-        addItem(item)
++        root.busy = false;
+     }
+-
+-    function markDone(index) {
+-        if (index >= 0 && index < list.length) {
+-            list[index].done = true
+-            // Reassign to trigger onListChanged
+-            root.list = list.slice(0)
+-            todoFileView.setText(JSON.stringify(root.list))
+-        }
+-    }
+-
+-    function markUnfinished(index) {
+-        if (index >= 0 && index < list.length) {
+-            list[index].done = false
+-            // Reassign to trigger onListChanged
+-            root.list = list.slice(0)
+-            todoFileView.setText(JSON.stringify(root.list))
+-        }
+-    }
+-
+-    function deleteItem(index) {
+-        if (index >= 0 && index < list.length) {
+-            list.splice(index, 1)
+-            // Reassign to trigger onListChanged
+-            root.list = list.slice(0)
+-            todoFileView.setText(JSON.stringify(root.list))
+-        }
+-    }
+-
+-    function refresh() {
+-        todoFileView.reload()
+-    }
+-
+-    Component.onCompleted: {
+-        refresh()
+-    }
+-
+-    FileView {
+-        id: todoFileView
+-        path: Qt.resolvedUrl(root.filePath)
+-        onLoaded: {
+-            const fileContents = todoFileView.text()
+-            root.list = JSON.parse(fileContents)
+-        }
+-        onLoadFailed: (error) => {
+-            if(error == FileViewError.FileNotFound) {
+-                console.log("[To Do] File not found, creating new file.")
+-                root.list = []
+-                todoFileView.setText(JSON.stringify(root.list))
+-            } else {
+-                console.log("[To Do] Error loading file: " + error)
++    Process {
++        id: worker
++        property bool responseReady: false
++        property bool exited: false
++        property var response: null
++        stdout: StdioCollector {
++            onStreamFinished: {
++                try { worker.response = JSON.parse(text); } catch (e) { worker.response = null; }
++                worker.responseReady = true;
++                root.finish();
+             }
+         }
++        onExited: (code, status) => { worker.exited = true; root.finish(); }
+     }
+ }
+-
+--- a/services/Updates.qml
++++ b/services/Updates.qml
+@@ -39,7 +39,7 @@
+     Process {
+         id: checkAvailabilityProc
+         running: Config.ready && Config.options.updates.enableCheck
+-        command: ["which", "checkupdates"]
++        command: ["python3", Quickshell.shellPath("integration/host.py"), "available"]
+         onExited: (exitCode, exitStatus) => {
+             root.available = (exitCode === 0);
+             firstCheckTimer.start();
+@@ -54,7 +54,7 @@
+ 
+     Process {
+         id: checkUpdatesProc
+-        command: ["bash", "-c", "pacman=$(checkupdates 2>/dev/null | wc -l); if command -v yay >/dev/null 2>&1; then aur=$(yay -Qua 2>/dev/null | wc -l); elif command -v paru >/dev/null 2>&1; then aur=$(paru -Qua 2>/dev/null | wc -l); else aur=0; fi; echo $((pacman + aur))"]
++        command: ["python3", Quickshell.shellPath("integration/host.py"), "check"]
+         stdout: StdioCollector {
+             onStreamFinished: {
+                 root.count = parseInt(text.trim())
+--- a/services/Wallpapers.qml
++++ b/services/Wallpapers.qml
+@@ -24,7 +24,7 @@
+ 
+     property alias directory: folderModel.folder
+     readonly property string effectiveDirectory: getCleanDirPath(folderModel.folder)
+-    property url defaultFolder: Qt.resolvedUrl(`${Directories.pictures}/Wallpapers`)
++    property url defaultFolder: Qt.resolvedUrl(`${Directories.pictures}/wallpapers`)
+     property alias folderModel: folderModel // Expose for direct binding when needed
+     property alias wallpaperModel: wallpaperModel
+     property string sortMode: Config.options.wallpaperSelector?.sortMode || "custom"
+@@ -493,8 +493,7 @@
+         thumbgenProc.directory = root.directory
+         thumbgenProc.running = false
+         thumbgenProc.command = [
+-            "bash", "-c",
+-            `${thumbgenScriptPath} --size ${size} --machine_progress -d ${FileUtils.trimFileProtocol(root.directory)} || ${generateThumbnailsMagickScriptPath} --size ${size} -d ${FileUtils.trimFileProtocol(root.directory)}`,
++            "bash", generateThumbnailsMagickScriptPath, "--size", size, "-d", FileUtils.trimFileProtocol(root.directory),
+         ]
+         // console.log("[Wallpapers] Updating thumbnails with command ", thumbgenProc.command.join(" "))
+         root.thumbnailGenerationProgress = 0
+--- a/services/Weather.qml
++++ b/services/Weather.qml
+@@ -93,6 +93,7 @@
+     }
+ 
+     function getData() {
++        if (!root.city && !root.gpsActive) return;
+         const defaultApiKey = ""
+         let apiKey = KeyringStorage.keyringData?.apiKeys?.openweather || defaultApiKey
+ 
+--- a/services/gCloud/token-from-key-venv.sh
++++ b/services/gCloud/token-from-key-venv.sh
+@@ -1,6 +1,4 @@
+ #!/usr/bin/env bash
+-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+-
+-source $(eval echo $ILLOGICAL_IMPULSE_VIRTUAL_ENV)/bin/activate
+-"$SCRIPT_DIR/token_from_key.py" "$@"
+-deactivate
++set -euo pipefail
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++exec /usr/bin/python3 "$SCRIPT_DIR/token_from_key.py" "$@"
+--- a/shell.qml
++++ b/shell.qml
+@@ -18,6 +18,7 @@
+     id: root
+ 
+     ReloadPopup {}
++    RiceBridge {}
+ 
+     Process {
+         id: autostartProc
+@@ -44,13 +45,13 @@
+     Component.onCompleted: {
+         MaterialThemeLoader.reapplyTheme()
+         Hyprsunset.load()
+-        FirstRunExperience.load()
+-        ConflictKiller.load()
++// First-run wallpaper replacement is managed by the integration.
++// Profile switching manages competing processes.
+         Cliphist.refresh()
+         Wallpapers.load()
+         Football.load()
+         Updates.load()
+-        LyricsService.restartLyrics()
++// Lyrics are opt-in.
+     }
+     
+     PanelFamilyLoader {
+--- a/tests/icon_theme_manager/test_manager.py
++++ b/tests/icon_theme_manager/test_manager.py
+@@ -72,7 +72,7 @@
+ 
+     # ------------------------------------------------------------------ helpers
+     def write_config(self, *, dynamic: bool, follow: bool = True, override: bool = True, theme: str = "Tela") -> None:
+-        path = self.config / "illogical-impulse/config.json"
++        path = self.config / "hyprland-rice/end4/config.json"
+         path.parent.mkdir(parents=True, exist_ok=True)
+         write_json(
+             path,
+--- a/translations/de_DE.json
++++ b/translations/de_DE.json
+@@ -29,7 +29,7 @@
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Zufälliges SFW-Anime-Hintergrundbild von Konachan\nBild wird in ~/Pictures/Wallpapers gespeichert",
+   "The popular one | Best quantity, but quality can vary wildly": "Der beliebte | Beste Menge, aber Qualität kann stark variieren",
+   "System uptime:": "Systemlaufzeit:",
+-  "illogical-impulse Welcome": "illogical-impulse Willkommen",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 Willkommen",
+   "Code saved to file": "Code in Datei gespeichert",
+   "Info": "Info",
+   "Preferred wallpaper zoom (%)": "Bevorzugter Hintergrundbild-Zoom (%)",
+@@ -121,7 +121,7 @@
+   "Visibility": "Sichtbarkeit",
+   "Shell & utilities": "Shell & Utilities",
+   "Hollow": "Hohl",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Use the system file picker instead\nRight-click to make this the default behavior": "System-Dateiauswahl verwenden\nRechtsklick, um dies zum Standardverhalten zu machen",
+   "On-screen display": "Bildschirmanzeige",
+   "Dotfiles": "Dotfiles",
+@@ -431,7 +431,7 @@
+   "Set the system prompt for the model.": "Den System-Prompt für das Modell festlegen.",
+   "Done": "Fertig",
+   "Focus": "Fokus",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "Shell-Konfigurationsdatei öffnen.\nFalls der Button nicht funktioniert oder nicht in deinem bevorzugten Editor öffnet,\nkannst du ~/.config/illogical-impulse/config.json manuell öffnen",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "Shell-Konfigurationsdatei öffnen.\nFalls der Button nicht funktioniert oder nicht in deinem bevorzugten Editor öffnet,\nkannst du ~/.config/hyprland-rice/end4/config.json manuell öffnen",
+   "View Markdown source": "Markdown-Quelle anzeigen",
+   "Border": "Rahmen",
+   "Temperature set to %1": "Temperatur gesetzt auf %1",
+--- a/translations/en_US.json
++++ b/translations/en_US.json
+@@ -22,7 +22,7 @@
+   "Start": "Start",
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers",
+   "The popular one | Best quantity, but quality can vary wildly": "The popular one | Best quantity, but quality can vary wildly",
+-  "illogical-impulse Welcome": "illogical-impulse Welcome",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 Welcome",
+   "Code saved to file": "Code saved to file",
+   "Info": "Info",
+   "Time": "Time",
+--- a/translations/es_ES.json
++++ b/translations/es_ES.json
+@@ -22,7 +22,7 @@
+   "Start": "Iniciar",
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Fondo de anime SFW aleatorio de Konachan\nLa imagen se guarda en ~/Pictures/Wallpapers",
+   "The popular one | Best quantity, but quality can vary wildly": "El más popular | La mayor cantidad, aunque la calidad varía mucho",
+-  "illogical-impulse Welcome": "Bienvenida a illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Bienvenida a hyprland-rice/end4",
+   "Code saved to file": "Código guardado en un archivo",
+   "Info": "Información",
+   "Time": "Hora",
+--- a/translations/fr_FR.json
++++ b/translations/fr_FR.json
+@@ -29,7 +29,7 @@
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Fond d'écran anime aléatoire (SFW) de Konachan\nL'image est sauvegardée dans ~/Pictures/Wallpapers",
+   "The popular one | Best quantity, but quality can vary wildly": "Le plus populaire | Meilleure quantité, mais la qualité peut varier énormément",
+   "System uptime:": "Temps de fonctionnement :",
+-  "illogical-impulse Welcome": "Bienvenue illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Bienvenue hyprland-rice/end4",
+   "Code saved to file": "Code sauvegardé dans le fichier",
+   "Info": "Info",
+   "Preferred wallpaper zoom (%)": "Zoom préféré du fond d'écran (%)",
+@@ -122,7 +122,7 @@
+   "Visibility": "Visibilité",
+   "Shell & utilities": "Shell et utilitaires",
+   "Hollow": "Creux",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Use the system file picker instead\nRight-click to make this the default behavior": "Utiliser le sélecteur de fichiers système\nClic droit pour en faire le comportement par défaut",
+   "On-screen display": "Affichage à l'écran",
+   "Dotfiles": "Dotfiles",
+@@ -436,7 +436,7 @@
+   "Set the system prompt for the model.": "Définir l'invite système pour le modèle.",
+   "Done": "Terminé",
+   "Focus": "Focus",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "Ouvrir le fichier de configuration du shell.\nSi le bouton ne fonctionne pas ou ne s'ouvre pas dans votre éditeur préféré,\nvous pouvez ouvrir manuellement ~/.config/illogical-impulse/config.json",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "Ouvrir le fichier de configuration du shell.\nSi le bouton ne fonctionne pas ou ne s'ouvre pas dans votre éditeur préféré,\nvous pouvez ouvrir manuellement ~/.config/hyprland-rice/end4/config.json",
+   "View Markdown source": "Voir la source Markdown",
+   "Border": "Bordure",
+   "Temperature set to %1": "Température définie sur %1",
+--- a/translations/he_HE.json
++++ b/translations/he_HE.json
+@@ -68,7 +68,7 @@
+   "Base URL": "כתובת בסיס",
+   "Always show numbers": "הצג מספרים תמיד",
+   "Wallpaper parallax": "אפקט parallax לטפט",
+-  "illogical-impulse Welcome": "ברוך הבא ל-illogical-impulse",
++  "hyprland-rice/end4 Welcome": "ברוך הבא ל-hyprland-rice/end4",
+   "Local only": "מקומי בלבד",
+   "Dark/Light toggle": "מצב כהה/בהיר",
+   "Screen snip": "צילום מסך",
+@@ -196,7 +196,7 @@
+   "Clear the current list of images": "נקה את רשימת התמונות הנוכחית",
+   "To set an API key, pass it with the %4 command\n\nTo view the key, pass \"get\" with the command<br/>\n\n### For %1:\n\n**Link**: %2\n\n%3": "כדי להגדיר מפתח API, העבר אותו עם הפקודה %4\n\nכדי להציג את המפתח, העבר \"get\" עם הפקודה<br/>\n\n### עבור %1:\n\n**קישור**: %2\n\n%3",
+   "Time to full:": "זמן עד טעינה מלאה:",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Online | %1's model | Delivers fast, responsive and well-formatted answers. Disadvantages: not very eager to do stuff; might make up unknown function calls": "מקוון | מודל של %1 | מספק תשובות מהירות, מגיבות ומעוצבות היטב. חסרונות: לא תמיד יוזם פעולות; עלול להמציא קריאות פונקציה לא מוכרות",
+   "Refreshing (manually triggered)": "מרענן (הופעל ידנית)",
+   "Kill conflicting programs?": "להפסיק תוכנות מתנגשות?",
+@@ -263,7 +263,7 @@
+   "Sidebars": "סרגלים צדדיים",
+   "Stopwatch": "סטופר",
+   "Distro": "הפצה",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "פתח את קובץ הקונפיג של ה-shell.\nאם הכפתור לא עובד או לא נפתח בעורך המועדף עליך, תוכל לפתוח ידנית את ~/.config/illogical-impulse/config.json",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "פתח את קובץ הקונפיג של ה-shell.\nאם הכפתור לא עובד או לא נפתח בעורך המועדף עליך, תוכל לפתוח ידנית את ~/.config/hyprland-rice/end4/config.json",
+   "🌿 Long break: %1 minutes": "🌿 הפסקה ארוכה: %1 דקות",
+   "Max allowed increase": "העלייה המרבית המותרת",
+   "Conflicts with the shell's system tray implementation": "מתנגש עם מימוש מגש המערכת של ה-shell",
+--- a/translations/id_ID.json
++++ b/translations/id_ID.json
+@@ -29,7 +29,7 @@
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Wallpaper Anime SFW acak dari Konachan\nGambar disimpan di ~/Pictures/Wallpapers",
+   "The popular one | Best quantity, but quality can vary wildly": "Paling populer | Kuantitas tinggi, kualitas bisa sangat bervariasi",
+   "System uptime:": "Waktu aktif sistem:",
+-  "illogical-impulse Welcome": "Selamat datang di illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Selamat datang di hyprland-rice/end4",
+   "Code saved to file": "Kode disimpan ke file",
+   "Info": "Info",
+   "Preferred wallpaper zoom (%)": "Preferensi perbesaran wallpaper (%)",
+@@ -121,7 +121,7 @@
+   "Visibility": "Visibilitas",
+   "Shell & utilities": "Shell & utilitas",
+   "Hollow": "Berongga",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Use the system file picker instead\nRight-click to make this the default behavior": "Gunakan pemilih file sistem\nKlik kanan untuk menjadikan ini perilaku bawaan",
+   "On-screen display": "Tampilan di layar",
+   "Dotfiles": "Dotfiles",
+@@ -431,7 +431,7 @@
+   "Set the system prompt for the model.": "Atur prompt sistem untuk model.",
+   "Done": "Selesai",
+   "Focus": "Fokus",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "Buka file konfigurasi shell.\nJika tombol tidak berfungsi atau tidak terbuka di editor favorit Anda,\nAnda dapat membuka ~/.config/illogical-impulse/config.json secara manual",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "Buka file konfigurasi shell.\nJika tombol tidak berfungsi atau tidak terbuka di editor favorit Anda,\nAnda dapat membuka ~/.config/hyprland-rice/end4/config.json secara manual",
+   "View Markdown source": "Lihat sumber Markdown",
+   "Border": "Bingkai",
+   "Temperature set to %1": "Temperatur diatur ke %1",
+--- a/translations/it_IT.json
++++ b/translations/it_IT.json
+@@ -82,7 +82,7 @@
+   "Always show numbers": "Mostra numeri",
+   "Wallpaper parallax": "Effetto parallasse sfondo",
+   "Plain rectangle": "Semplice",
+-  "illogical-impulse Welcome": "Benvenuto su illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Benvenuto su hyprland-rice/end4",
+   "Local only": "Solo locale",
+   "Dark/Light toggle": "Modalità chiaro/scuro",
+   "Screen snip": "Cattura schermo",
+@@ -227,7 +227,7 @@
+   "API key:\n\n```txt\n%1\n```": "Chiave API:\n\n```txt\n%1\n```",
+   "Use Levenshtein distance-based algorithm instead of fuzzy": "Usa algoritmo di Levenshtein al posto di fuzzy",
+   "Download complete": "Download completato",
+-  "Tip: Hide icons and always show numbers for\nthe classic illogical-impulse experience": "Suggerimento: Nascondi le icone e mostra i numeri se vuoi\nun'esperienza fedele all'originale",
++  "Tip: Hide icons and always show numbers for\nthe classic hyprland-rice/end4 experience": "Suggerimento: Nascondi le icone e mostra i numeri se vuoi\nun'esperienza fedele all'originale",
+   "Usage": "Istruzioni",
+   "Set API key": "Imposta chiave API",
+   "Networking": "Rete",
+--- a/translations/ja_JP.json
++++ b/translations/ja_JP.json
+@@ -172,7 +172,7 @@
+   "Keybinds": "キー割り当て",
+   "Float": "フローティング",
+   "Hug": "固定",
+-  "illogical-impulse Welcome": "illogical-impulse へようこそ！",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 へようこそ！",
+   "Info": "情報",
+   "Volume limit": "ボリューム制限",
+   "Prevents abrupt increments and restricts volume limit": "急な音量変化を防ぎ、音量の上限を設定します",
+@@ -209,7 +209,7 @@
+   "Dock": "ドック",
+   "Weather": "天気",
+   "Pinned on startup": "起動時にピン留め",
+-  "Tip: Hide icons and always show numbers for\nthe classic illogical-impulse experience": "ヒント: アイコンを非表示にして番号を常に表示すると、クラシックなillogical-impulseの使用感を体験できます",
++  "Tip: Hide icons and always show numbers for\nthe classic hyprland-rice/end4 experience": "ヒント: アイコンを非表示にして番号を常に表示すると、クラシックなhyprland-rice/end4の使用感を体験できます",
+   "Always show numbers": "数字を常に表示",
+   "Buttons": "ボタン",
+   "Keyboard toggle": "キーボード切替",
+@@ -239,7 +239,7 @@
+   "Privacy Policy": "プライバシーポリシー",
+   "Documentation": "ドキュメント",
+   "Shell & utilities theming must also be enabled": "「シェルとユーティリティ」のテーマ設定も有効にする必要があります",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Donate": "寄付",
+   "Terminal": "ターミナル",
+   "Shell & utilities": "シェルとユーティリティ",
+@@ -420,7 +420,7 @@
+   "Break": "休憩",
+   "Your package manager is running": "パッケージマネージャーが実行中です",
+   "API key is set\nChange with /key YOUR_API_KEY": "APIキーが設定済み\n/key YOUR_API_KEYで変更できます",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "シェルの設定ファイルを開きます。\nボタンが機能しない、または任意のエディタで開かない場合は、\n~/.config/illogical-impulse/config.json を手動で開いてください",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "シェルの設定ファイルを開きます。\nボタンが機能しない、または任意のエディタで開かない場合は、\n~/.config/hyprland-rice/end4/config.json を手動で開いてください",
+   "CPU usage": "CPU使用率",
+   "Swap usage": "スワップ使用量",
+   "Usage: %1save CHAT_NAME": "使用法: %1save チャット名",
+--- a/translations/pt_BR.json
++++ b/translations/pt_BR.json
+@@ -221,7 +221,7 @@
+   "Action": "Ação",
+   "Force hover open at absolute corner": "Forçar canto absoluto",
+   "Fill": "Preencher",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Commands": "Comandos",
+   "No active player": "Nenhum player ativo",
+   "Show only when locked": "Mostrar apenas quando bloqueado",
+@@ -348,7 +348,7 @@
+   "To Do:": "A Fazer:",
+   "Content": "Adaptativo",
+   "Thin": "Fino",
+-  "illogical-impulse Welcome": "Boas-vindas ao illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Boas-vindas ao hyprland-rice/end4",
+   "Timer": "Timer",
+   "Widgets": "Widgets",
+   "Performance Profile toggle": "Alternar Perfil de Desempenho",
+--- a/translations/ru_RU.json
++++ b/translations/ru_RU.json
+@@ -27,7 +27,7 @@
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Случайные SFW аниме обои с Konachan\nСохраняется в ~/Pictures/Wallpapers",
+   "The popular one | Best quantity, but quality can vary wildly": "Популярный | Больше всего контента, качество нестабильно",
+   "System uptime:": "Аптайм:",
+-  "illogical-impulse Welcome": "Добро пожаловать в illogical-impulse",
++  "hyprland-rice/end4 Welcome": "Добро пожаловать в hyprland-rice/end4",
+   "Code saved to file": "Код сохранён",
+   "Info": "Инфо",
+   "Preferred wallpaper zoom (%)": "Зум обоев (%)",
+@@ -111,7 +111,7 @@
+   "Visibility": "Видимость",
+   "Shell & utilities": "Оболочки и утилит",
+   "Hollow": "Полый",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Use the system file picker instead\nRight-click to make this the default behavior": "Сист. диалог файлов\nПКМ - сделать поведением по умолчанию",
+   "On-screen display": "Экранное отображение",
+   "Dotfiles": "Dotfile",
+--- a/translations/tr_TR.json
++++ b/translations/tr_TR.json
+@@ -29,7 +29,7 @@
+   "Random SFW Anime wallpaper from Konachan\nImage is saved to ~/Pictures/Wallpapers": "Konachan'dan rastgele SFW Anime duvar kağıdı\nGörsel ~/Resimler/Wallpapers dizinine kaydedilir",
+   "The popular one | Best quantity, but quality can vary wildly": "Popüler olan | En iyi miktar, ama kalite değişebilir",
+   "System uptime:": "Sistem çalışma süresi:",
+-  "illogical-impulse Welcome": "illogical-impulse'a Hoş Geldiniz",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4'a Hoş Geldiniz",
+   "Code saved to file": "Kod dosyaya kaydedildi",
+   "Info": "Bilgi",
+   "Preferred wallpaper zoom (%)": "Tercih edilen duvar kağıdı yakınlaştırması (%)",
+@@ -121,7 +121,7 @@
+   "Visibility": "Görünürlük",
+   "Shell & utilities": "Shell ve yardımcı programlar",
+   "Hollow": "İçi boş",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Use the system file picker instead\nRight-click to make this the default behavior": "Bunun yerine sistem dosya seçiciyi kullan\nBunu varsayılan davranış yapmak için sağ tıklayın",
+   "On-screen display": "Ekran üstü gösterim",
+   "Dotfiles": "Nokta dosyaları",
+@@ -431,7 +431,7 @@
+   "Set the system prompt for the model.": "Model için sistem komutunu ayarlayın.",
+   "Done": "Tamamlandı",
+   "Focus": "Odaklan",
+-  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/illogical-impulse/config.json": "Shell yapılandırma dosyasını açın.\nDüğme çalışmıyorsa veya favori düzenleyicinizde açılmıyorsa,\n~/.config/illogical-impulse/config.json dosyasını manuel olarak açabilirsiniz",
++  "Open the shell config file.\nIf the button doesn't work or doesn't open in your favorite editor,\nyou can manually open ~/.config/hyprland-rice/end4/config.json": "Shell yapılandırma dosyasını açın.\nDüğme çalışmıyorsa veya favori düzenleyicinizde açılmıyorsa,\n~/.config/hyprland-rice/end4/config.json dosyasını manuel olarak açabilirsiniz",
+   "View Markdown source": "Markdown kaynağını görüntüle",
+   "Border": "Kenarlık",
+   "Temperature set to %1": "Sıcaklık %1 olarak ayarlandı",
+--- a/translations/uk_UA.json
++++ b/translations/uk_UA.json
+@@ -174,7 +174,7 @@
+   "Float": "Плаваюче",
+   "Hug": "Обійми",
+   "Yooooo hi there": "Йоооо, привіт",
+-  "illogical-impulse Welcome": "illogical-impulse Вітаємо",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 Вітаємо",
+   "Info": "Інфо",
+   "Volume limit": "Обмеження гучності",
+   "Prevents abrupt increments and restricts volume limit": "Запобігає різкому збільшенню та обмежує ліміт гучності",
+@@ -211,7 +211,7 @@
+   "Dock": "Лоток",
+   "Weather": "Погода",
+   "Pinned on startup": "Прикріплено до запуску",
+-  "Tip: Hide icons and always show numbers for\nthe classic illogical-impulse experience": "Порада: приховуйте іконки і завжди показуйте цифри для класичного досвіду illogical-impulse",
++  "Tip: Hide icons and always show numbers for\nthe classic hyprland-rice/end4 experience": "Порада: приховуйте іконки і завжди показуйте цифри для класичного досвіду hyprland-rice/end4",
+   "Appearance": "Вигляд",
+   "Always show numbers": "Завжди показувати номери",
+   "Buttons": "Кнопки",
+@@ -242,7 +242,7 @@
+   "Privacy Policy": "Політика Конфіденційності",
+   "Documentation": "Документація",
+   "Shell & utilities theming must also be enabled": "Тему оболонки та утиліт також слід увімкнути",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Donate": "Донат",
+   "Terminal": "Термінал",
+   "Shell & utilities": "Оболонка та утиліти",
+--- a/translations/vi_VN.json
++++ b/translations/vi_VN.json
+@@ -169,13 +169,13 @@
+   "Services": "Các dịch vụ",
+   "Reload Hyprland & Quickshell": "Tải lại Hyprland & Quickshell",
+   "Automatic suspend": "Tự động ngủ",
+-  "illogical-impulse Welcome": "illogical-impulse - Xin chào",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 - Xin chào",
+   "Interface": "Giao diện",
+   "Load chat": "Tải cuộc trò chuyện",
+   "Number show delay when pressing Super (ms)": "Thời gian chờ hiện số khi nhấn Super (ms)",
+   "Clear the current list of images": "Xóa danh sách hình ảnh hiện tại",
+   "Fake screen rounding": "Giả bo tròn màn hình",
+-  "Tip: Hide icons and always show numbers for\nthe classic illogical-impulse experience": "Mẹo: Ẩn biểu tượng và luôn hiển thị số nếu\nmuốn giống trải nghiệm illogical-impulse gốc",
++  "Tip: Hide icons and always show numbers for\nthe classic hyprland-rice/end4 experience": "Mẹo: Ẩn biểu tượng và luôn hiển thị số nếu\nmuốn giống trải nghiệm hyprland-rice/end4 gốc",
+   "Launch": "Chạy",
+   "%1 notifications": "%1 thông báo",
+   "%1 | Right-click to configure": "%1 | Ấn chuột phải để chỉnh",
+@@ -186,7 +186,7 @@
+   "Opens cheatsheet on press": "Mở bảng tra cứu khi ấn",
+   "Invalid arguments. Must provide `key` and `value`.": "Biến không hợp lệ. cần cả `key` và `value`.",
+   "About": "Giới thiệu",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Help & Support": "Trợ giúp",
+   "Enter tags, or \"%1\" for commands": "Nhập tag hoặc \"%1\" để xem các lệnh",
+   "Format": "Định dạng",
+@@ -366,7 +366,7 @@
+   "Tool set to %1": "Công cụ được đặt thành %1",
+   "Invalid arguments. Must provide `command`.": "Tham số không hợp lệ. Phải cung cấp `command`.",
+   "A download is in progress": "Có một tệp đang tải",
+-  "illogical-impulse Settings": "Cài đặt illogical-impulse",
++  "hyprland-rice/end4 Settings": "Cài đặt hyprland-rice/end4",
+   "Online | Google's model\nNewer model that's slower than its predecessor but should deliver higher quality answers": "Trực tuyến | Model của Google\nMới hơn nhưng chậm hơn so với phiên bản trước nhưng nên cung cấp câu trả lời chất lượng cao hơn",
+   "Preferred wallpaper zoom (%)": "Tỷ lệ thu phóng hình nền (%)",
+   "Function Response": "Phản hồi function"
+--- a/translations/zh_CN.json
++++ b/translations/zh_CN.json
+@@ -166,7 +166,7 @@
+   "Keybinds": "快捷键",
+   "Float": "悬浮",
+   "Hug": "贴合",
+-  "illogical-impulse Welcome": "illogical-impulse 欢迎页",
++  "hyprland-rice/end4 Welcome": "hyprland-rice/end4 欢迎页",
+   "Info": "信息",
+   "Volume limit": "音量限制",
+   "Prevents abrupt increments and restricts volume limit": "防止骤增并限制音量",
+@@ -225,7 +225,7 @@
+   "Documentation": "文档",
+   "Shell & utilities theming must also be enabled": "必须同时启用 Shell 与工具主题",
+   "Ignored if terminal theming is not enabled": "终端主题未启用时不生效",
+-  "illogical-impulse": "illogical-impulse",
++  "hyprland-rice/end4": "hyprland-rice/end4",
+   "Donate": "捐助",
+   "Terminal": "终端",
+   "Shell & utilities": "Shell 与工具",
+--- a/welcome.qml
++++ b/welcome.qml
+@@ -28,7 +28,7 @@
+         Quickshell.execDetached(["notify-send", Translation.tr("Welcome app"), Translation.tr("Enjoy! You can reopen the welcome app any time with <tt>Super+Shift+Alt+/</tt>. To open the settings app, hit <tt>Super+I</tt>"), "-a", "Shell"]);
+         Qt.quit();
+     }
+-    title: Translation.tr("illogical-impulse Welcome")
++    title: Translation.tr("hyprland-rice/end4 Welcome")
+ 
+     Component.onCompleted: {
+         MaterialThemeLoader.reapplyTheme();
