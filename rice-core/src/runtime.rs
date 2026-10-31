@@ -64,6 +64,10 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
             .arg(root.join("integration/lite.patch")))?;
     }
     fs::create_dir_all(dest.join("integration"))?;
+    fs::copy(
+        root.join("integration/thumbnail.sh"),
+        dest.join("integration/thumbnail.sh"),
+    )?;
     fs::copy(env::current_exe()?, dest.join("integration/rice-core"))?;
     for (file, cmd) in [
         ("tasks.py", "tasks"),

@@ -65,6 +65,7 @@ fn dispatch(a: &[String]) -> Result<()> {
         "monitor-caps" => extras::caps(a)?,
         "icons" => extras::icons(a)?,
         "tasks" => println!("{}", storage::tasks(a)?),
+        "cache-prune" => storage::prune_thumbnails()?,
         "palette" => storage::palette(
             Path::new(a.first().context("source")?),
             Path::new(a.get(1).context("destination")?),

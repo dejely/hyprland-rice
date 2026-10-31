@@ -229,3 +229,38 @@ pub fn monitor(a: &[String]) -> Result<()> {
     write_json(&state, &data)?;
     atomic(&path, text.as_bytes())
 }
+
+/// Prune generated thumbnails without traversing personal wallpaper directories.
+pub fn prune_thumbnails() -> Result<()> {
+    let root = xdg("XDG_CACHE_HOME", ".cache").join("hyprland-rice/end4/thumbnails");
+    if !root.exists() {
+        return Ok(());
+    }
+    if root.is_symlink() {
+        bail!("Thumbnail cache must not be a symlink");
+    }
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(&root).follow_links(false) {
+        let entry = entry?;
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "png") {
+            let metadata = entry.metadata()?;
+            files.push((
+                metadata.modified()?,
+                metadata.len(),
+                entry.path().to_owned(),
+            ));
+        }
+    }
+    files.sort_by_key(|row| row.0);
+    let mut bytes: u64 = files.iter().map(|row| row.1).sum();
+    let mut count = files.len();
+    for (_, size, path) in files {
+        if bytes <= 128 * 1024 * 1024 && count <= 512 {
+            break;
+        }
+        fs::remove_file(path)?;
+        bytes -= size;
+        count -= 1;
+    }
+    Ok(())
+}
