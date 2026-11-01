@@ -51,16 +51,17 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   start=time.monotonic();sample('startup')
   while time.monotonic()-start<a.seconds:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
-  for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]:
+  sp.run(['hyprctl','dispatch','focusmonitor',output],check=True,stdout=sp.DEVNULL)
+  for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]+([('desktopMenu','open')] if a.profile=='end4-lite' else []):
    for i in range(a.cycles):
     ipc(target,method);time.sleep(.8)
-    state=json.loads(ipc('desktop','status'));key={'search':'overview','settings':'settings','wallpaperSelector':'wallpaperSelector','sidebarRight':'notifications'}[target]
+    state=json.loads(ipc('desktop','status'));key={'search':'overview','settings':'settings','wallpaperSelector':'wallpaperSelector','sidebarRight':'notifications','desktopMenu':'desktopMenu'}[target]
     for _ in range(50):
      if state[key]:break
      time.sleep(.1);state=json.loads(ipc('desktop','status'))
     assert state[key], (target,'did not stay open',state)
     ipc('desktop','closePanels');time.sleep(.4)
-    state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications')), state
+    state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications','desktopMenu') if k in state), state
     if (i+1)%5==0:sample(target+':'+method+':'+str(i+1))
    if a.cycles:
     time.sleep(2.5);closed=sample(target+':'+method+':closed')
@@ -73,6 +74,8 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   Path(a.report+'.log').write_text((root/'shell.log').read_text(errors='replace'))
  finally:
   if (root/'shell.log').exists():Path(a.report+'.log').write_text((root/'shell.log').read_text(errors='replace'))
+  tool_log=root/'state/hyprland-rice/end4/tools.log'
+  if tool_log.exists():Path(a.report+'.tools.log').write_text(tool_log.read_text(errors='replace'))
   sp.run(['systemctl','--user','stop',unit],stdout=sp.DEVNULL,stderr=sp.DEVNULL)
   sp.run(['hyprctl','dispatch','focusmonitor',original],stdout=sp.DEVNULL)
   if output:sp.run(['hyprctl','output','remove',output],stdout=sp.DEVNULL)

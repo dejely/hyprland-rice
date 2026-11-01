@@ -77,6 +77,7 @@ def run(output):
                 function testConfig(path: string, value: string): void { Config.setNestedValue(path, JSON.parse(value)); }
                 function testTasks(action: string, payload: string): bool { return Todo.transact(action, payload); }
                 function testTaskState(): string { return JSON.stringify({busy:Todo.busy,tasks:Todo.list.length,undo:!!Todo.deleted,error:Todo.error}); }
+                function testMenu(): bool { return !!desktopMenu.window; }
                 function testNotifications(): int { return Notifications.list.length; }
                 function testDismissAll(): void { Notifications.discardAllNotifications(); }
 '''))
@@ -267,6 +268,11 @@ def run(output):
                 ipc('tool', 'testDismissAll')
                 wait(lambda state: state['notificationCount'] == 0, 'notification dismissal forwards to owner')
                 ipc('desktop', 'closePanels'); time.sleep(.7)
+                ipc('desktopMenu', 'open')
+                wait(lambda state: state['desktopMenu'], 'native desktop menu')
+                assert ipc('tool', 'testMenu') == 'true', 'Desktop widget menu did not construct'
+                ipc('desktop', 'closePanels'); time.sleep(.7)
+                print('PASS native desktop widget menu remains accessible', flush=True)
                 print('PASS tool settings merge, shared task undo and notification ownership', flush=True)
             print('PASS dashboard, targeted color/bar settings, native shortcut help, wallpaper and notifications IPC', flush=True)
             stop()

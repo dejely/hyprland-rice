@@ -27,7 +27,7 @@
 -                completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
 -                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
 +                completed: Todo.list.filter(t => t.done).length, notificationCount: Notifications.list.length, unreadNotifications: Notifications.unread, accent: String(Appearance.m3colors.m3primary),
-+                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen, wallpaperSelector: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen})
++                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen, wallpaperSelector: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen, desktopMenu: GlobalStates.desktopMenuOpen})
          }
 -        function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
 +        function task(action: string, payload: string): bool { return action === "undo" ? Todo.undo() : Todo.transact(action, payload); }
@@ -482,6 +482,60 @@
 \ No newline at end of file
 +
 +
++}
+--- a/modules/ii/background/widgets/weather/WeatherWidget.qml
++++ b/modules/ii/background/widgets/weather/WeatherWidget.qml
+@@ -92,7 +92,7 @@
+                 anchors.margins: 18
+                 StyledText { text: "Set your weather city"; font.pixelSize: 18 }
+                 StyledText { text: "Choose a city in Services → Weather." }
+-                Button { text: "Weather settings"; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
++                RippleButton { buttonText: "Weather settings"; implicitHeight: 30; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
+             }
+         }
+         // 1x1 
+--- a/modules/ii/desktopMenu/DesktopMenu.qml
++++ b/modules/ii/desktopMenu/DesktopMenu.qml
+@@ -15,6 +15,7 @@
+ 
+ Scope {
+     id: root
++    readonly property var window: desktopMenuLoader.item
+ 
+     function openCentered(shouldOpen) {
+         if (!shouldOpen) {
+@@ -73,6 +74,7 @@
+ 
+     // Menu window
+     Loader {
++        id: desktopMenuLoader
+         active: GlobalStates.desktopMenuOpen
+         sourceComponent: PanelWindow {
+             id: menuWindow
+@@ -187,8 +189,6 @@
+                             model: [
+                                 { icon: "format_paint", label: "Wallpaper & style", kind: "wallpaper" },
+                                 { icon: "widgets", label: "Widgets", kind: "widgets" },
+-                                { icon: "stacks", label: "DropShelf", kind: "dropshelf" },
+-                                { icon: "video_template", label: "Live Wallpaper", kind: "live" },
+                                 { icon: "settings", label: "Settings", kind: "settings" }
+                             ]
+ 
+@@ -197,7 +197,7 @@
+                                 required property var modelData
+                                 required property int index
+                                 readonly property bool isFirst: index === 0
+-                                readonly property bool isLast: index === 4
++                                readonly property bool isLast: index === 2
+ 
+                                 Layout.fillWidth: true
+                                 implicitHeight: 56
+@@ -322,4 +322,4 @@
+             }
+         }
+     }
+-}
+\ No newline at end of file
 +}
 --- a/modules/ii/mediaControls/MediaControls.qml
 +++ b/modules/ii/mediaControls/MediaControls.qml

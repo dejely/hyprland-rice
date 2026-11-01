@@ -11,16 +11,18 @@ import qs.modules.ii.settings
 import qs.modules.ii.wallpaperSelector
 import qs.modules.ii.sidebarRight
 import qs.modules.ii.mediaControls
+import qs.modules.ii.desktopMenu
 
 ShellRoot {
     id: root
     property bool started: false
-    function closeAll() {
-        GlobalStates.overviewOpen = false;
+    function closeAll(keepOverview) {
+        if (!keepOverview) GlobalStates.overviewOpen = false;
         GlobalStates.settingsOpen = false;
         GlobalStates.wallpaperSelectorOpen = false;
         GlobalStates.sidebarRightOpen = false;
         GlobalStates.mediaControlsOpen = false;
+        GlobalStates.desktopMenuOpen = false;
     }
     function open(action, payload) {
         if (action === "task-state") {
@@ -38,6 +40,7 @@ ShellRoot {
             Notifications.syncingToolState = false;
             return;
         }
+        queryTimer.stop();
         const previous = {overview: GlobalStates.overviewOpen, settings: GlobalStates.settingsOpen, wallpaper: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen, media: GlobalStates.mediaControlsOpen, query: LauncherSearch.query};
         if (action === "close") { root.closeAll(); return; }
         if (action === "settings-target") {
@@ -46,8 +49,20 @@ ShellRoot {
             GlobalStates.openSettingsAt(target.page, target.label || "", target.section || "", target.subsection || "");
             return;
         }
-        root.closeAll();
-        if (action.startsWith("launcher") || action.startsWith("overview")) GlobalStates.overviewOpen = !action.endsWith("toggle") || !previous.overview;
+        const searchRequest = ["launcher", "overview", "clipboard", "emoji"].some(prefix => action.startsWith(prefix)) || action === "help" || action === "symbols";
+        root.closeAll(searchRequest && previous.overview);
+        if (action === "desktop-menu") {
+            const point = JSON.parse(payload || "{}");
+            GlobalStates.desktopMenuScreen = Quickshell.screens.find(s => s.name === (Quickshell.env("RICE_TEST_OUTPUT") || point.screen)) || Quickshell.screens[0];
+            GlobalStates.desktopMenuX = point.x ?? GlobalStates.desktopMenuScreen.width / 2;
+            GlobalStates.desktopMenuY = point.y ?? GlobalStates.desktopMenuScreen.height / 2;
+            GlobalStates.desktopMenuOpen = true;
+            return;
+        }
+        if (action.startsWith("launcher") || action.startsWith("overview")) {
+            GlobalStates.overviewOpen = !action.endsWith("toggle") || !previous.overview;
+            if (GlobalStates.overviewOpen) overview.setQuery("");
+        }
         else if (action.startsWith("clipboard") || action.startsWith("emoji") || action === "help" || action === "symbols") {
             const prefix = action.startsWith("clipboard") ? Config.options.search.prefix.clipboard : Config.options.search.prefix.emojis;
             if (action.endsWith("toggle") && previous.overview && previous.query.startsWith(prefix)) return;
@@ -69,11 +84,12 @@ ShellRoot {
     WallpaperSelector { id: wallpaperSelector }
     SidebarRight {}
     MediaControls {}
+    DesktopMenu { id: desktopMenu }
     FileView { id: stateFile; path: Quickshell.env("RICE_TOOL_STATUS"); printErrors: false }
     Timer {
         id: stateDelay
         interval: 20
-        onTriggered: stateFile.setText(JSON.stringify({started: root.started, open: GlobalStates.overviewOpen || GlobalStates.settingsOpen || GlobalStates.wallpaperSelectorOpen || GlobalStates.sidebarRightOpen || GlobalStates.mediaControlsOpen || wallpaperSelector.reallyOpen, overview: GlobalStates.overviewOpen, settings: GlobalStates.settingsOpen, wallpaper: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen, media: GlobalStates.mediaControlsOpen, dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, directory: Wallpapers.effectiveDirectory, preview: Wallpapers.previewPath, confirmed: Wallpapers.confirmedPath}))
+        onTriggered: stateFile.setText(JSON.stringify({started: root.started, open: GlobalStates.overviewOpen || GlobalStates.settingsOpen || GlobalStates.wallpaperSelectorOpen || GlobalStates.sidebarRightOpen || GlobalStates.mediaControlsOpen || GlobalStates.desktopMenuOpen || wallpaperSelector.reallyOpen, desktopMenu: GlobalStates.desktopMenuOpen, overview: GlobalStates.overviewOpen, settings: GlobalStates.settingsOpen, wallpaper: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen, media: GlobalStates.mediaControlsOpen, dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, directory: Wallpapers.effectiveDirectory, preview: Wallpapers.previewPath, confirmed: Wallpapers.confirmedPath}))
     }
     Connections {
         target: GlobalStates
@@ -82,6 +98,7 @@ ShellRoot {
         function onWallpaperSelectorOpenChanged() { stateDelay.restart(); }
         function onSidebarRightOpenChanged() { stateDelay.restart(); }
         function onMediaControlsOpenChanged() { stateDelay.restart(); }
+        function onDesktopMenuOpenChanged() { stateDelay.restart(); }
         function onDashboardPageChanged() { stateDelay.restart(); }
         function onDashboardGroupChanged() { stateDelay.restart(); }
     }

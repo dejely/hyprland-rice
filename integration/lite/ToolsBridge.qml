@@ -31,6 +31,7 @@ Scope {
         GlobalStates.wallpaperSelectorOpen = state.wallpaper || false;
         GlobalStates.sidebarRightOpen = state.notifications || false;
         GlobalStates.mediaControlsOpen = state.media || false;
+        GlobalStates.desktopMenuOpen = state.desktopMenu || false;
         if (state.dashboardPage !== undefined) GlobalStates.dashboardPage = state.dashboardPage;
         if (state.dashboardGroup !== undefined) GlobalStates.dashboardGroup = state.dashboardGroup;
         if (state.directory && state.directory !== Wallpapers.effectiveDirectory) Wallpapers.setDirectory(state.directory);
@@ -71,6 +72,9 @@ Scope {
         function onWallpaperSelectorOpenChanged() { if (!root.syncing) root.request(GlobalStates.wallpaperSelectorOpen ? "wallpaper" : "close"); }
         function onSidebarRightOpenChanged() { if (!root.syncing) root.request(GlobalStates.sidebarRightOpen ? "notifications" : "close"); }
         function onMediaControlsOpenChanged() { if (!root.syncing) root.request(GlobalStates.mediaControlsOpen ? "media" : "close"); }
+        function onDesktopMenuOpenChanged() {
+            if (!root.syncing) root.request(GlobalStates.desktopMenuOpen ? "desktop-menu" : "close", JSON.stringify({x:GlobalStates.desktopMenuX,y:GlobalStates.desktopMenuY,screen:GlobalStates.desktopMenuScreen?.name || ""}));
+        }
         function onSettingsTargetChanged() { if (!root.syncing && GlobalStates.settingsTarget) root.request("settings-target", JSON.stringify(GlobalStates.settingsTarget)); }
     }
     Connections {
@@ -94,6 +98,11 @@ Scope {
         function clipboardToggle(): void { root.request("clipboard-toggle"); }
         function emojiToggle(): void { root.request("emoji-toggle"); }
         function help(): void { root.request("help"); }
+    }
+    IpcHandler {
+        target: "desktopMenu"
+        function open(): void { root.request("desktop-menu", "{}"); }
+        function close(): void { root.request("close"); }
     }
     IpcHandler {
         target: "settings"
