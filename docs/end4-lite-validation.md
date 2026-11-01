@@ -2,7 +2,7 @@
 
 Test host: Fedora 44, Hyprland 0.56.2, Quickshell 0.3.2, Qt 6.11.2, 1920 × 1200 at scale 1. The profile retains Arch presentation and uses the actual host package manager for updates.
 
-Status on 2026-11-01: implemented and opt-in, with JaKooLit restored after live checks. Functional checks pass. The strict 250 MiB total-service memory gate remains unmet; lower process memory is not presented as a pass for that gate.
+Status on 2026-11-01: end4-lite is active after functional, memory and rollback checks. The final idle samples passed the strict 250 MiB service-plus-swap gate, including file cache. The laptop spot check was 231.6 MiB with zero swap. Profile changes remain explicit and reversible.
 
 ## Runtime
 
@@ -17,6 +17,10 @@ Closing the last panel exits the temporary shell. Its private settings copy cont
 
 Rust handles atomic storage, palette translation, installation, profile restoration and upstream compatibility helpers. Shell scripts launch the binary and serialize thumbnail generation. Existing QML retains the native visual controls. Development tests use Python; the new installer and lite runtime do not invoke it.
 
+After startup and after the last panel exits, a short-lived Rust helper requests reclamation of excess file cache from its own service cgroup. It skips unrelated units and open panels, leaves cache headroom, caps each request, and performs one request per event. The kernel interface is best effort; unavailable permissions or unsupported kernels are reported as a skipped cleanup. This is separate from Qt's component cache and preserves singleton objects.
+
+The helper uses the kernel's [`memory.reclaim` interface](https://docs.kernel.org/admin-guide/cgroup-v2.html), with `swappiness=0`. For this non-root cgroup, the [kernel's reclaim selection](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/+/refs/heads/master/mm/vmscan.c) chooses file pages at zero swappiness. The request targets only the current `rice-desktop.service` (or an isolated benchmark service), so it does not change the host's global swappiness or clear global caches.
+
 ## Checks
 
 | Check | Result |
@@ -24,12 +28,12 @@ Rust handles atomic storage, palette translation, installation, profile restorat
 | Automated suite | 32 tests pass, including 40 concurrent task writers, corrupt-file preservation, task IDs, palette recovery, profile edit guards, rollback and thumbnail limits |
 | Broker ownership | Final settings flushed; normal close reaps the child; unexpected exit reported; killing the broker terminates its panel |
 | Long-running helpers | Network monitor exits with its QML owner, including abrupt termination |
-| Rust | `cargo fmt --check` and `cargo clippy --locked -- -D warnings` pass |
+| Rust | One unit test rejects unrelated service/slice paths; `cargo fmt --check` and `cargo clippy --locked -- -D warnings` pass |
 | Shell | Installer, thumbnail helper and rendering defaults pass `bash -n` |
 | Graphical smoke | Passed native task editing/completion/undo, 25-task scrolling, widget geometry and visibility persistence, incomplete palette recovery, empty weather/media presentation, real dashboard cards and wallpaper thumbnails |
 | Shared state | Concurrent main/tool settings changes retained; tool deletion undone from main; child notification dismissal forwarded to the sole main notification owner |
 | Native desktop menu | Real menu window constructs in the temporary host; widget controls remain available |
-| Panel stress | 20 cycles each of launcher, overview, clipboard, wallpaper, settings, notifications and desktop menu; all 140 cycles completed; one shell and one network monitor remained after each group |
+| Panel stress | Before cache reclamation: 140 functional cycles completed. Final memory gate: 10 cycles each of seven panel actions, all 70 completed; every settled group had one shell and one network monitor |
 | Live shortcuts | All 163 chords retained; no missing chords, changed unrelated actions or duplicate redirected actions |
 | Live rendering | Desktop and dashboard captured and inspected at 1920 × 1200; center clear, one native bar, dark cards and wallpaper colors retained |
 | Live restart | Killed the main shell while settings were open; systemd recovered the main shell and desktop IPC |
@@ -37,7 +41,7 @@ Rust handles atomic storage, palette translation, installation, profile restorat
 | Live rollback | Fixed installer verified on the laptop; original Quickshell link and binding actions restored; no Hyprland config errors; personal task hash unchanged |
 | Idle/lock | Hypridle retained and running; correct native `lock_cmd` installed and original command restored on rollback; hyprlock executable present; authentication not exercised |
 
-The graphical smoke test uses isolated config/data/state/cache and a private D-Bus session on a temporary output. Run graphical tests serially: focus grabs belong to the compositor and can conflict even on separate headless outputs.
+The graphical smoke test uses isolated config/data/state/cache and a private D-Bus session on a temporary output, with real compositor focus grabs. Run graphical tests serially: focus grabs belong to the compositor and can conflict even on separate headless outputs. The separate memory benchmark disables the focus grab only in its temporary runtime copy so ordinary laptop input cannot dismiss a measured panel; it does not validate keyboard focus.
 
 ```bash
 cargo build --locked --release --manifest-path rice-core/Cargo.toml
@@ -54,18 +58,22 @@ The 250 MiB target applies to idle memory after startup and after panel use. The
 
 The original full-shell control settled at 728.3 MiB service memory and 556.6 MiB PSS in the same headless setup. Earlier single-process lite experiments met cold idle but retained substantial memory after panel use; they are not acceptance evidence for the final profile. A broker test exposed orphaned `nmcli monitor` processes; the owner-lifetime guard and its regression test address that cause.
 
-Final broker run: 120 seconds idle followed by 140 panel cycles. Memory pressure caused swapping, which is included below rather than treating lower resident memory as a saving.
+The pre-cleanup broker run used 120 seconds idle followed by 140 panel cycles. Memory pressure caused swapping, which is included below rather than treating lower resident memory as a saving. The cache-cleanup build then passed 120 seconds of idle sampling. Its final noninteractive budget run used 30 seconds idle and 70 panel cycles, with an assertion on every idle and settled-group sample.
 
 | Measurement | Total service + swap | PSS + service swap, upper bound |
 |---|---:|---:|
 | Original full-shell settled control | 728.3 MiB | 556.6 MiB |
-| Lite at the end of the idle phase | 254.1 MiB | 214.2 MiB |
-| Lite after all 140 panel cycles | 747.2 MiB | 220.6 MiB |
-| Lite live laptop spot check, no swap | 358.3 MiB | 221.6 MiB |
+| Lite before cache cleanup, end of idle phase | 254.1 MiB | 214.2 MiB |
+| Lite before cache cleanup, after 140 cycles | 747.2 MiB | 220.6 MiB |
+| Lite with cache cleanup, after 70 cycles | 245.0 MiB | 200.3 MiB |
 
-The final stress sample includes 107.5 MiB swap and about 509.5 MiB file cache (`memory.stat.file - shmem`), with one Quickshell and one network monitor. Anonymous memory, shared memory, kernel charges and swap together account for about 236.5 MiB. Clean file cache is reclaimable by Linux, but remains included in the total-service column. These observations support reduced retained process memory and successful panel teardown; they do **not** establish a 250 MiB cache-inclusive ceiling. The largest recorded service peak was 920.9 MiB before separately accounting for swap. Transient panel use can still be expensive.
+The pre-cleanup stress sample included 107.5 MiB swap and about 509.5 MiB file cache (`memory.stat.file - shmem`). That run failed the strict gate. The one-shot, service-local cleanup addresses this cache ownership without requesting anonymous swapping.
 
-Reports, logs and screenshots are local `/tmp/rice-lite-final.json*` and `/tmp/rice-lite-live-audit/` artifacts. They are not committed or uploaded. JaKooLit remains selected because the strict total-service target has not passed. Enabling lite is an explicit profile choice, not an automatic rollout.
+In the final cleanup-enabled run, every idle/group-settled sample was between **233.3 and 245.0 MiB total service memory, with zero swap**. The final sample includes about 8.0 MiB file cache. The recorded service peak during panel activity was 610.3 MiB; the 250 MiB target applies to settled idle, not open-panel peaks. Panel-open observation waits had a median of 896 ms and maximum of 1388 ms, including the harness's fixed 800 ms render wait; these are not first-frame latency measurements.
+
+The live laptop check after startup cleanup was **231.6 MiB service memory, zero swap**. End4-lite is now selected. On kernels or permission setups that cannot perform scoped reclamation, the helper skips it and this cache-inclusive budget is not guaranteed. No hard memory limit or OOM policy is installed.
+
+Reports, logs and screenshots remain local under `/tmp/rice-lite-budget.json*`, `/tmp/rice-lite-reclaim-final.json*`, and `/tmp/rice-lite-live-audit/`. They are not committed or uploaded. The interrupted focus-capturing memory run is not counted as a completed stress pass; functional focus checks are covered separately by the real-grab smoke and live desktop checks.
 
 Live verification also caught a malformed installer lock directive and a config-file deletion gap during rollback. The fixed installer uses a literal-preserving replacement for `lock_cmd` and atomic replacement of watched config files. The regression suite checks the exact lock directive and observes filesystem events to reject deletion of `hyprland.conf` during installation or rollback; live switching and restoration then passed.
 
