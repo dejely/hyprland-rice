@@ -54,12 +54,13 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   sp.run(['hyprctl','dispatch','focusmonitor',output],check=True,stdout=sp.DEVNULL)
   for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]+([('desktopMenu','open')] if a.profile=='end4-lite' else []):
    for i in range(a.cycles):
-    ipc(target,method);time.sleep(.8)
+    opened_at=time.monotonic();ipc(target,method);time.sleep(.8)
     state=json.loads(ipc('desktop','status'));key={'search':'overview','settings':'settings','wallpaperSelector':'wallpaperSelector','sidebarRight':'notifications','desktopMenu':'desktopMenu'}[target]
     for _ in range(50):
      if state[key]:break
      time.sleep(.1);state=json.loads(ipc('desktop','status'))
     assert state[key], (target,'did not stay open',state)
+    report['cycles'].append(dict(target=target,method=method,index=i+1,open_ms=round((time.monotonic()-opened_at)*1000,1)))
     ipc('desktop','closePanels');time.sleep(.4)
     state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications','desktopMenu') if k in state), state
     if (i+1)%5==0:sample(target+':'+method+':'+str(i+1))
