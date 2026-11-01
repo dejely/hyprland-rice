@@ -36,6 +36,10 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
    try: json.loads(ipc('desktop','status'));break
    except (sp.CalledProcessError,ValueError):time.sleep(.1)
   else: raise RuntimeError((root/'shell.log').read_text())
+  def check_budget(row):
+   idle=row['label'] in ('idle','settled') or row['label'].endswith(':closed')
+   if a.profile=='end4-lite' and idle:
+    assert row['service_bytes']+row['swap_bytes']<=250*1024*1024, ('Idle service plus swap exceeds 250 MiB',row['label'],row['service_bytes'],row['swap_bytes'])
   def sample(label):
    props=dict(l.split('=',1) for l in command('systemctl','--user','show',unit,'-p','MemoryCurrent','-p','MemoryPeak','-p','ControlGroup','-p','MemorySwapCurrent','-p','CPUUsageNSec').splitlines())
    cgroup=Path('/sys/fs/cgroup')/props['ControlGroup'].lstrip('/');pids=[int(pid) for f in cgroup.rglob('cgroup.procs') for pid in f.read_text().split()]
@@ -47,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
      pss+=sm.get('Pss',0);rss+=sm.get('Rss',0);processes.append(dict(name=Path(f'/proc/{pid}/comm').read_text().strip(),pss_kib=sm.get('Pss',0),anon_kib=sm.get('Pss_Anon',0),file_kib=sm.get('Pss_File',0)))
      if Path(f'/proc/{pid}/comm').read_text().strip()=='qs':Path(a.report+'.smaps').write_text(Path(f'/proc/{pid}/smaps').read_text())
     except (OSError,ValueError):pass
-   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes,network_monitors=network_monitors);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);return row
+   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes,network_monitors=network_monitors);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);check_budget(row);return row
   start=time.monotonic();sample('startup')
   while time.monotonic()-start<a.seconds:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
