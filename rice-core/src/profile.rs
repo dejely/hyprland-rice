@@ -176,7 +176,7 @@ pub fn switch(a: &[String]) -> Result<()> {
             runtime.join("integration/lite-env.sh"),
         )?;
         let launch = session.join("launch.sh");
-        let text = fs::read_to_string(&launch)?.replace("exec /usr/bin/qs", "export QML_IMPORT_PATH=\"$(dirname -- \"$(realpath -- \"$0\")\")/../native${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}\"\nsource \"$(dirname -- \"$(realpath -- \"$0\")\")/../integration/lite-env.sh\"\nexec /usr/bin/qs");
+        let text = fs::read_to_string(&launch)?.replace("exec /usr/bin/qs", "source \"$(dirname -- \"$(realpath -- \"$0\")\")/../integration/lite-env.sh\"\nexec /usr/bin/qs");
         fs::write(launch, text)?;
     }
     fs::copy(env::current_exe()?, session.join("rice-core"))?;

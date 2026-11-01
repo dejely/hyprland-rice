@@ -53,8 +53,6 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
     fs::write(dest.join(".rice-generated"), "")?;
     copy_tree(&root.join("integration/overrides"), &dest)?;
     if lite {
-        run(Command::new("bash").arg(root.join("scripts/build-native.sh")))?;
-        copy_tree(&root.join("rice-core/target/native"), &dest.join("native"))?;
         run(Command::new("patch")
             .arg("--batch")
             .arg("--fuzz=0")
@@ -63,6 +61,16 @@ pub fn build(root: &Path, dest: &Path, lite: bool) -> Result<()> {
             .arg(&dest)
             .arg("-i")
             .arg(root.join("integration/lite.patch")))?;
+    }
+    if lite {
+        fs::copy(
+            root.join("integration/lite/ToolsBridge.qml"),
+            dest.join("ToolsBridge.qml"),
+        )?;
+        fs::copy(
+            root.join("integration/lite/tool-host.qml"),
+            dest.join("tool-host.qml"),
+        )?;
     }
     fs::create_dir_all(dest.join("integration"))?;
     fs::copy(

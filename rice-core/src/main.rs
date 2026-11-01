@@ -9,6 +9,7 @@ mod extras;
 mod profile;
 mod runtime;
 mod storage;
+mod tools;
 fn home() -> PathBuf {
     PathBuf::from(env::var_os("HOME").expect("HOME"))
 }
@@ -65,6 +66,7 @@ fn dispatch(a: &[String]) -> Result<()> {
         "monitor-caps" => extras::caps(a)?,
         "icons" => extras::icons(a)?,
         "icon-theme" => extras::icon_theme(a)?,
+        "tool" => tools::run_tool(a)?,
         "tasks" => println!("{}", storage::tasks(a)?),
         "cache-prune" => storage::prune_thumbnails()?,
         "palette" => storage::palette(

@@ -1,24 +1,10 @@
 --- a/RiceBridge.qml
 +++ b/RiceBridge.qml
-@@ -1,25 +1,50 @@
- import QtQuick
-+import Rice.Native 1.0
- import Quickshell
- import Quickshell.Io
- import qs
+@@ -5,28 +5,37 @@
  import qs.services
  import qs.modules.common
  Scope {
-+    function canTrim() { return !GlobalStates.overviewOpen && !GlobalStates.settingsOpen && !GlobalStates.sidebarRightOpen && !GlobalStates.wallpaperSelectorOpen && !GlobalStates.mediaControlsOpen; }
-+    Timer { id: memoryTrim; interval: 1500; onTriggered: { if (canTrim()) Memory.trim(); } }
-+    Connections {
-+        target: GlobalStates
-+        function onOverviewOpenChanged() { memoryTrim.restart(); }
-+        function onSettingsOpenChanged() { memoryTrim.restart(); }
-+        function onSidebarRightOpenChanged() { memoryTrim.restart(); }
-+        function onWallpaperSelectorOpenChanged() { memoryTrim.restart(); }
-+        function onMediaControlsOpenChanged() { memoryTrim.restart(); }
-+    }
++    ToolsBridge { id: tools }
      Process {
          id: paletteWorker
          command: ["python3", Quickshell.shellPath("integration/palette.py"),
@@ -31,32 +17,45 @@
 +        onFileChanged: paletteDebounce.restart()
 +    }
 +    Timer { id: paletteDebounce; interval: 150; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; else restart(); } }
-+    Component.onCompleted: { paletteDebounce.start(); memoryTrim.start(); }
++    Component.onCompleted: { paletteDebounce.start();  }
 +
  
      IpcHandler {
          target: "desktop"
          function status(): string {
              return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
-                 completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
+-                completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
 -                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
++                completed: Todo.list.filter(t => t.done).length, notificationCount: Notifications.list.length, unreadNotifications: Notifications.unread, accent: String(Appearance.m3colors.m3primary),
 +                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen, wallpaperSelector: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen})
          }
-         function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
-+        function closePanels(): void {
-+            GlobalStates.overviewOpen = false;
-+            GlobalStates.settingsOpen = false;
-+            GlobalStates.wallpaperSelectorOpen = false;
-+            GlobalStates.sidebarRightOpen = false;
-+            GlobalStates.mediaControlsOpen = false;
-+        }
+-        function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
++        function task(action: string, payload: string): bool { return action === "undo" ? Todo.undo() : Todo.transact(action, payload); }
++        function closePanels(): void { tools.request("close"); }
          function refreshTasks(): void { Todo.refresh(); }
-         function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
-         function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
+-        function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+-        function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
+-        function barLayout(): void { GlobalStates.openSettingsAt("bar", "", "Bar layout", ""); }
+-        function colors(): void { GlobalStates.openSettingsAt("interface", "", "Wallpaper colors", ""); }
++        function settings(page: string): void { tools.request("settings-target", JSON.stringify({page:page})); }
++        function barStyle(): void { tools.request("settings-target", JSON.stringify({page:"bar",section:"Positioning & Styles"})); }
++        function barLayout(): void { tools.request("settings-target", JSON.stringify({page:"bar",section:"Bar layout"})); }
++        function colors(): void { tools.request("settings-target", JSON.stringify({page:"interface",section:"Wallpaper colors"})); }
+         function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
+-        function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
+-        function help(): void { GlobalStates.overviewOpen = true; }
++        function clipboard(): void { tools.request("clipboard-toggle"); }
++        function help(): void { tools.request("help"); }
+     }
+ }
 --- a/modules/common/Config.qml
 +++ b/modules/common/Config.qml
-@@ -10,7 +10,7 @@
-     property string filePath: Directories.shellConfigPath
+@@ -7,10 +7,10 @@
+ 
+ Singleton {
+     id: root
+-    property string filePath: Directories.shellConfigPath
++    property string filePath: Quickshell.env("RICE_SETTINGS_PATH") || Directories.shellConfigPath
      property alias options: configOptionsJsonAdapter
      property bool ready: false
 -    property int readWriteDelay: 50 // milliseconds
@@ -484,6 +483,40 @@
 +
 +
 +}
+--- a/modules/ii/mediaControls/MediaControls.qml
++++ b/modules/ii/mediaControls/MediaControls.qml
+@@ -265,17 +265,17 @@
+         target: "mediaControls"
+ 
+         function toggle(): void {
+-            mediaControlsLoader.active = !mediaControlsLoader.active;
++            GlobalStates.mediaControlsOpen = !GlobalStates.mediaControlsOpen;
+             if (mediaControlsLoader.active)
+                 Notifications.timeoutAll();
+         }
+ 
+         function close(): void {
+-            mediaControlsLoader.active = false;
++            GlobalStates.mediaControlsOpen = false;
+         }
+ 
+         function open(): void {
+-            mediaControlsLoader.active = true;
++            GlobalStates.mediaControlsOpen = true;
+             Notifications.timeoutAll();
+         }
+     }
+--- a/modules/ii/notificationPopup/NotificationPopup.qml
++++ b/modules/ii/notificationPopup/NotificationPopup.qml
+@@ -14,7 +14,7 @@
+     PanelWindow {
+         id: root
+         visible: (Notifications.popupList.length > 0) && !GlobalStates.screenLocked && !GlobalStates.dynamicIslandEnabled
+-        screen: Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? null
++        screen: Quickshell.screens.find(s => s.name === (Quickshell.env("RICE_TEST_OUTPUT") || Hyprland.focusedMonitor?.name)) ?? null
+ 
+         property string position: {
+             const raw = Config.options.notifications.position ?? "top_right"
 --- a/modules/ii/overview/Overview.qml
 +++ b/modules/ii/overview/Overview.qml
 @@ -14,154 +14,20 @@
@@ -1537,29 +1570,29 @@
 +        }
 --- a/panelFamilies/IllogicalImpulseFamily.qml
 +++ b/panelFamilies/IllogicalImpulseFamily.qml
-@@ -5,53 +5,26 @@
+@@ -5,53 +5,16 @@
  import qs.modules.common
  import qs.modules.ii.background
  import qs.modules.ii.bar
 -import qs.modules.ii.dock
 -import qs.modules.ii.equalizer
 -import qs.modules.ii.lock
- import qs.modules.ii.mediaControls
+-import qs.modules.ii.mediaControls
  import qs.modules.ii.notificationPopup
  import qs.modules.ii.onScreenDisplay
 -import qs.modules.ii.onScreenKeyboard
- import qs.modules.ii.overview
+-import qs.modules.ii.overview
 -import qs.modules.ii.polkit
- import qs.modules.ii.settings
+-import qs.modules.ii.settings
 -import qs.modules.ii.regionSelector
 -import qs.modules.ii.screenCorners
 -import qs.modules.ii.screenTranslator
 -import qs.modules.ii.sessionScreen
 -import qs.modules.ii.sidebarLeft
- import qs.modules.ii.sidebarRight
+-import qs.modules.ii.sidebarRight
 -import qs.modules.ii.overlay
  import qs.modules.ii.verticalBar
- import qs.modules.ii.wallpaperSelector
+-import qs.modules.ii.wallpaperSelector
 -import qs.modules.ii.desktopMenu
 -import qs.modules.ii.dropover
 -import qs.modules.ii.frame
@@ -1570,22 +1603,22 @@
 -    PanelLoader { extraCondition: Config.options.dock.enable; component: Dock {} }
 -    PanelLoader { component: EqualizerPopup {} }
      // hyprlock remains the session lock.
-     PanelLoader { component: MediaControls {} }
+-    PanelLoader { component: MediaControls {} }
      PanelLoader { component: NotificationPopup {} }
      PanelLoader { component: OnScreenDisplay {} }
 -    PanelLoader { component: OnScreenKeyboard {} }
 -    PanelLoader { component: Overlay {} }
-     PanelLoader { component: Overview {} }
+-    PanelLoader { component: Overview {} }
      // Keep the existing session polkit agent.
 -    PanelLoader { component: RegionSelector {} }
 -    PanelLoader { component: ScreenCorners {} }
 -    PanelLoader { component: ScreenTranslator {} }
 -    PanelLoader { component: SessionScreen {} }
 -    PanelLoader { component: SidebarLeft {} }
-     PanelLoader { component: SidebarRight {} }
+-    PanelLoader { component: SidebarRight {} }
      PanelLoader { extraCondition: Config.options.bar.vertical; component: VerticalBar {} }
-     PanelLoader { component: WallpaperSelector {} }
-     PanelLoader { component: Settings {} }
+-    PanelLoader { component: WallpaperSelector {} }
+-    PanelLoader { component: Settings {} }
 -    PanelLoader { component: DesktopMenu {} }
 -    PanelLoader { extraCondition: GlobalStates.dropShelfOpen; component: DropShelfPanel {} }
 -    PanelLoader { component: NiriBackdrop {} }
@@ -1602,6 +1635,23 @@
          stdout: StdioCollector {
              onStreamFinished: {
                  try {
+--- a/services/CompositorGlobalShortcut.qml
++++ b/services/CompositorGlobalShortcut.qml
+@@ -1,4 +1,5 @@
+ import QtQuick
++import Quickshell
+ import Quickshell.Hyprland
+ import qs.services
+ 
+@@ -10,7 +11,7 @@
+     signal pressed()
+     signal released()
+ 
+-    active: WM.compositor === "hyprland"
++    active: WM.compositor === "hyprland" && Quickshell.env("RICE_TOOL_HOST") !== "1"
+ 
+     sourceComponent: GlobalShortcut {
+         name: root.name
 --- a/services/DesktopWidgets.qml
 +++ b/services/DesktopWidgets.qml
 @@ -11,18 +11,10 @@
@@ -1665,6 +1715,121 @@
 +    // Lite: lyrics fetching is disabled.
  }
 \ No newline at end of file
+--- a/services/Notifications.qml
++++ b/services/Notifications.qml
+@@ -16,6 +16,12 @@
+  */
+ Singleton {
+ 	id: root
++    readonly property bool toolHost: Quickshell.env("RICE_TOOL_HOST") === "1"
++    property bool syncingToolState: false
++    function forward(action, data) {
++        Quickshell.execDetached(["qs", "ipc", "-p", Quickshell.env("RICE_TOOL_MAIN"), "call", "toolNotifications", "command", action, JSON.stringify(data)]);
++    }
++
+     component Notif: QtObject {
+         id: wrapper
+         required property int notificationId // Could just be `id` but it conflicts with the default prop in QtObject
+@@ -78,8 +84,9 @@
+         }
+     }
+ 
+-    property bool silent: false
+-    property int unread: 0
++    property bool silent: toolHost ? Quickshell.env("RICE_TOOL_SILENT") === "1" : false
++    onSilentChanged: if (toolHost && !syncingToolState) forward("silent", silent)
++    property int unread: toolHost ? Number(Quickshell.env("RICE_TOOL_UNREAD") || "0") : 0
+     property var filePath: Directories.notificationsPath
+     property list<Notif> list: []
+     property var popupList: list.filter((notif) => notif.popup);
+@@ -152,8 +159,9 @@
+     signal discardAll();
+     signal timeout(id: var);
+ 
+-	NotificationServer {
+-        id: notifServer
++	property var notifServer: serverLoader.item
++    Loader { id: serverLoader; active: !root.toolHost; sourceComponent: NotificationServer {
++        id: nativeNotifServer
+         // actionIconsSupported: true
+         actionsSupported: true
+         bodyHyperlinksSupported: true
+@@ -189,8 +197,10 @@
+             notifFileView.setText(stringifyList(root.list));
+         }
+     }
++    }
+ 
+     function markAllRead() {
++        if (root.toolHost) { root.unread = 0; forward("read", null); return; }
+         root.unread = 0;
+     }
+ 
+@@ -199,6 +209,7 @@
+     }
+ 
+     function discardNotifications(ids) {
++        if (root.toolHost) { forward("discard", ids); return; }
+         console.log("[Notifications] Discarding notifications with IDs: " + ids.join(", "));
+         const idSet = new Set(ids);
+         // Assign a new array instead of splicing: on a list<> property, splice()
+@@ -216,6 +227,7 @@
+     }
+ 
+     function discardAllNotifications() {
++        if (root.toolHost) { forward("discardAll", null); return; }
+         root.list = []
+         triggerListChange()
+         notifFileView.setText(stringifyList(root.list));
+@@ -226,12 +238,14 @@
+     }
+ 
+     function cancelTimeout(id) {
++        if (root.toolHost) { forward("cancelTimeout", id); return; }
+         const index = root.list.findIndex((notif) => notif.notificationId === id);
+         if (root.list[index] != null && root.list[index].timer != null)
+             root.list[index].timer.stop();
+     }
+ 
+     function timeoutNotification(id) {
++        if (root.toolHost) { forward("timeout", id); return; }
+         const index = root.list.findIndex((notif) => notif.notificationId === id);
+         if (root.list[index] != null)
+             root.list[index].popup = false;
+@@ -239,6 +253,7 @@
+     }
+ 
+     function timeoutAll() {
++        if (root.toolHost) { forward("timeoutAll", null); return; }
+         root.popupList.forEach((notif) => {
+             root.timeout(notif.notificationId);
+         })
+@@ -248,6 +263,7 @@
+     }
+ 
+     function attemptInvokeAction(id, notifIdentifier) {
++        if (root.toolHost) { forward("invoke", {id:id,action:notifIdentifier}); return; }
+         console.log("[Notifications] Attempting to invoke action with identifier: " + notifIdentifier + " for notification ID: " + id);
+         const notifServerIndex = notifServer.trackedNotifications.values.findIndex((notif) => notif.id + root.idOffset === id);
+         console.log("Notification server index: " + notifServerIndex);
+@@ -281,6 +297,8 @@
+ 
+     FileView {
+         id: notifFileView
++        watchChanges: root.toolHost
++        onFileChanged: if (root.toolHost) reload()
+         path: Qt.resolvedUrl(filePath)
+         onLoaded: {
+             try {
+@@ -288,7 +306,7 @@
+                 root.list = JSON.parse(fileContents).map((notif) => {
+                     return notifComponent.createObject(root, {
+                         "notificationId": notif.notificationId,
+-                        "actions": [], // Notification actions are meaningless if they're not tracked by the server or the sender is dead
++                        "actions": root.toolHost ? (notif.actions || []) : [], // The main process owns action handles.
+                         "appIcon": notif.appIcon,
+                         "appName": notif.appName,
+                         "body": notif.body,
 --- a/services/ResourceUsage.qml
 +++ b/services/ResourceUsage.qml
 @@ -175,7 +175,7 @@
@@ -1687,9 +1852,97 @@
              },
              [
                  { displayName: Translation.tr("Elastic"),   icon: "move_selection_right", value: "fast"   },
+--- a/services/Todo.qml
++++ b/services/Todo.qml
+@@ -5,13 +5,22 @@
+ Singleton {
+     id: root
+     property var list: []
+-    property var deleted: null
++    property var deleted: toolHost && Quickshell.env("RICE_TOOL_UNDO") === "1" ? ({available:true}) : null
+     property string error: ""
+-    property bool busy: false
++    readonly property bool toolHost: Quickshell.env("RICE_TOOL_HOST") === "1"
++    property bool requestBusy: false
++    property bool parentBusy: false
++    readonly property bool busy: requestBusy || (toolHost && parentBusy)
+     property string pending: ""
+     function transact(action, payload) {
+         if (busy) return false;
+-        busy = true;
++        if (root.toolHost && action !== "list") {
++            root.requestBusy = true;
++            proxy.command = ["qs", "ipc", "-p", Quickshell.env("RICE_TOOL_MAIN"), "call", "desktop", "task", action, payload];
++            proxy.running = true;
++            return true;
++        }
++        requestBusy = true;
+         pending = action;
+         worker.responseReady = false;
+         worker.exited = false;
+@@ -26,7 +35,7 @@
+     function markUnfinished(index) { if (list[index] && list[index].done) return run("toggle", {id: list[index].id}); return false; }
+     function deleteItem(index) { return list[index] ? run("delete", {id: list[index].id}) : false; }
+     function edit(id, text) { return run("edit", {id: id, text: text}); }
+-    function undo() { return deleted ? run("restore", deleted) : false; }
++    function undo() { if (root.toolHost) return run("undo", {}); return deleted ? run("restore", deleted) : false; }
+     function refresh() { return run("list", {}); }
+     Component.onCompleted: refresh()
+     function finish() {
+@@ -40,7 +49,7 @@
+             if (root.pending === "delete") root.deleted = result.deleted;
+             if (root.pending === "restore") root.deleted = null;
+         }
+-        root.busy = false;
++        root.requestBusy = false;
+     }
+     Process {
+         id: worker
+@@ -56,4 +65,33 @@
+         }
+         onExited: (code, status) => { worker.exited = true; root.finish(); }
+     }
++
++    Process {
++        id: proxy
++        stdout: StdioCollector { id: proxyResult }
++        onExited: (code, status) => {
++            root.requestBusy = false;
++            if (code !== 0 || proxyResult.text.trim() !== "true") root.error = "Task backend is busy; try again.";
++            else taskReload.restart();
++        }
++    }
++    FileView {
++        id: taskFile
++        path: (Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME") + "/.local/share") + "/hyprland-rice/tasks.json"
++        watchChanges: true
++        printErrors: false
++        onFileChanged: { reload(); taskReload.restart(); }
++    }
++    Timer {
++        id: taskReload
++        interval: 80
++        onTriggered: {
++            if (root.busy) { restart(); return; }
++            try {
++                const clean = rows => rows.map(t => ({id:t.id,text:t.text,done:t.done,created:t.created}));
++                if (!root.error && JSON.stringify(clean(JSON.parse(taskFile.text()).tasks)) === JSON.stringify(clean(root.list))) return;
++            } catch (error) {}
++            root.refresh();
++        }
++    }
+ }
 --- a/services/Wallpapers.qml
 +++ b/services/Wallpapers.qml
-@@ -138,14 +138,14 @@
+@@ -41,6 +41,7 @@
+     property string previewPath: ""  // Set during arrow navigation; empty by default
+     property string confirmedPath: ""  // Holds confirmed path until config catches up
+ 
++    Connections { target: Config.options.background; function onWallpaperPathChanged() { root.confirmedPath = ""; } }
+     signal changed()
+     signal thumbnailGenerated(directory: string)
+     signal thumbnailGeneratedFile(filePath: string)
+@@ -138,14 +139,14 @@
              if (/^\/*$/.test(validateDirProc.nicePath)) validateDirProc.nicePath = "/";
              validateDirProc.exec([
                  "bash", "-c",
