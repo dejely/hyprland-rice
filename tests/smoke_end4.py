@@ -49,7 +49,9 @@ HARNESS = '''
                 const item = bgRoot.riceFind(widgetCanvas, "rice-tasks");
                 item.animateXPos=false; item.animateYPos=false; item.x=x; item.y=y; item.commitPosition();
             }
-            function resize(width: int, height: int): void {
+            function notify(): void { Quickshell.execDetached(["notify-send", "--app-name=rice-fixture", "Fixture notification"]); }\n        function renderStats(): string { return JSON.stringify({shapeSize: centeredWallpaper.centeredShapeRenderSize, centered: centeredWallpaper.centeredWallpaperEnabled}); }
+        function centered(enabled: bool): void { Config.options.background.centeredWallpaper = enabled; }
+        function resize(width: int, height: int): void {
                 Config.options.background.widgets.todo.width=width;
                 Config.options.background.widgets.todo.height=height;
             }
@@ -61,10 +63,27 @@ HARNESS = '''
 def run(output):
     with tempfile.TemporaryDirectory(prefix='rice-end4-smoke-') as td:
         root = Path(td)
-        runtime = build(root / 'shell')
+        runtime = root / 'shell'
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            subprocess.run([str(ROOT / 'rice-core/target/release/rice-core'), 'build', str(ROOT), str(runtime), 'end4-lite'], check=True, stdout=subprocess.DEVNULL)
+        else:
+            runtime = build(runtime)
         bg = runtime / 'modules/ii/background/Background.qml'
         source = bg.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         bg.write_text(source.replace('        id: bgRoot', '        id: bgRoot\n' + HARNESS, 1))
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            host = runtime / 'tool-host.qml'
+            host.write_text(host.read_text().replace('target: "tool";', '''target: "tool";
+                function testConfig(path: string, value: string): void { Config.setNestedValue(path, JSON.parse(value)); }
+                function testTasks(action: string, payload: string): bool { return Todo.transact(action, payload); }
+                function testTaskState(): string { return JSON.stringify({busy:Todo.busy,tasks:Todo.list.length,undo:!!Todo.deleted,error:Todo.error}); }
+                function testMenu(): bool { return !!desktopMenu.window; }
+                function testNotifications(): int { return Notifications.list.length; }
+                function testDismissAll(): void { Notifications.discardAllNotifications(); }
+'''))
+        overview = runtime / 'modules/ii/overview/Overview.qml'
+        source = overview.read_text().replace('target: "search"', 'target: "search"\n        function testQuery(): string { return LauncherSearch.query; }\n        function testReady(): bool { return !!panelWindow; }')
+        overview.write_text(source)
         dashboard = runtime / 'modules/ii/settings/DashboardSettingsPage.qml'
         source = dashboard.read_text().replace('import QtQuick\n', 'import QtQuick\nimport Quickshell.Io\n', 1)
         source = source.replace('    id: root', '    id: root\n    IpcHandler { target: "dashboard-test"; function cards(): int { return root.layoutResult.count; } }', 1)
@@ -72,7 +91,10 @@ def run(output):
         data = json.loads((ROOT / 'integration/defaults.json').read_text())
         data['background']['wallpaperPath'] = str((Path.home() / '.config/rofi/.current_wallpaper').resolve())
         # Isolate the native file picker from the wallpaper library.
-        data['wallpaperSelector'] = {'userPath': str(root)}
+        gallery = root / 'gallery'
+        gallery.mkdir()
+        subprocess.run(['magick', '-size', '64x64', 'xc:red', str(gallery / "banana ' fixture.png")], check=True)
+        data['wallpaperSelector'] = {'userPath': str(gallery)}
         atomic_json(root / 'config/hyprland-rice/end4/config.json', data)
         palette = root / 'config/quickshell/qml_color.json'
         colors = dict(windowBackground='#10151c', primaryText='#eeeeee', secondaryText='#aaaaaa', accentPrimary='##aabbcc')
@@ -80,13 +102,20 @@ def run(output):
         sync(palette, root / 'state/hyprland-rice/end4/user/generated/colors.json')
         tools = root / 'bin'
         tools.mkdir()
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            blocker = tools / 'python3'
+            blocker.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$RICE_PYTHON_LOG"\nexit 126\n')
+            blocker.chmod(0o755)
+            (tools / 'python').symlink_to(blocker)
         trace = tools / 'hyprctl'
         trace.write_text('#!/usr/bin/env bash\nif [[ \"${1:-}\" == reload ]]; then ps -p \"$PPID\" -o args= >> \"$RICE_COMMAND_LOG\"; fi\nprintf "%s\\n" "$*" >> "$RICE_COMMAND_LOG"\nexec /usr/bin/hyprctl "$@"\n')
         trace.chmod(0o755)
         deps = Path.home() / '.local/share/hyprland-rice/deps/usr/lib64'
-        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
+        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_PYTHON_LOG=str(root / 'python-invocations.log'), RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
                    XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_STATE_HOME=str(root / 'state'), XDG_CACHE_HOME=str(root / 'cache'), RICE_TEST_OUTPUT=output)
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            env.update(dict(line.removeprefix('export ').split('=', 1) for line in (ROOT / 'integration/lite-env.sh').read_text().splitlines() if line.startswith('export ')))
         # Private bus prevents taking the laptop notification service name.
         logfile = (root / 'shell.log').open('w+')
         process = None
@@ -95,7 +124,8 @@ def run(output):
             return subprocess.Popen(['dbus-run-session', 'qs', '-p', str(runtime)], env=env, stdout=logfile, stderr=logfile)
 
         def ipc(target, method, *args):
-            return subprocess.check_output(['qs', 'ipc', '-p', str(runtime), 'call', target, method, *map(str, args)], env=env, text=True, stderr=subprocess.DEVNULL).strip()
+            path = runtime / 'tool-host.qml' if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite' and (target in ('dashboard-test', 'tool') or (target == 'search' and method.startswith('test'))) else runtime
+            return subprocess.check_output(['qs', 'ipc', '-p', str(path), 'call', target, method, *map(str, args)], env=env, text=True, stderr=subprocess.DEVNULL).strip()
 
         def wait(predicate, label):
             for _ in range(100):
@@ -104,7 +134,7 @@ def run(output):
                     status = json.loads(ipc('desktop', 'status'))
                     if not status['busy'] and predicate(status): return status
                 except (ValueError, subprocess.CalledProcessError): pass
-            raise AssertionError(label + '\n' + (root / 'shell.log').read_text(errors='replace')[-16000:])
+            raise AssertionError(label + ' status=' + str(locals().get('status')) + '\n' + (root / 'shell.log').read_text(errors='replace')[-16000:])
 
         def ui(method, *args):
             time.sleep(0.25)
@@ -144,6 +174,15 @@ def run(output):
             wait(lambda s: s['tasks'] == 1, 'undo')
             assert json.loads(tasks.read_text())['tasks'][0]['id'] == task_id
             print('PASS native UI entry, edit, completion, delete and undo retain ID', flush=True)
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] == 1
+                ipc('test', 'centered', 'true')
+                time.sleep(.8)
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] > 1
+                ipc('test', 'centered', 'false')
+                time.sleep(1.5)
+                assert json.loads(ipc('test', 'renderStats'))['shapeSize'] == 1
+                print('PASS disabled wallpaper masks stay unallocated; enabling and disabling works', flush=True)
             for index in range(24):
                 assert ipc('desktop', 'task', 'add', json.dumps({'text': f'Native list item {index}'})) == 'true'
                 wait(lambda s: s['tasks'] == index + 2, 'long list')
@@ -173,14 +212,68 @@ def run(output):
             for target, method in [('settings','open'), ('search','help'), ('wallpaperSelector','toggle'), ('sidebarRight','open')]:
                 ipc(target, method)
                 time.sleep(0.8)
-                if target == 'wallpaperSelector': ipc(target, 'toggle')
+                if target == 'wallpaperSelector':
+                    if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                        for _ in range(40):
+                            if list((root / 'cache/hyprland-rice/end4/thumbnails').rglob('*.png')): break
+                            time.sleep(.1)
+                        else: raise AssertionError('Visible wallpaper thumbnail was not generated')
+                    ipc(target, 'toggle')
                 else: ipc(target, 'close')
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                ipc('search', 'help'); time.sleep(.5)
+                query = ipc('search', 'testQuery')
+                assert query == '<', (query, ipc('search', 'testReady'))
+                ipc('search', 'close'); time.sleep(.3)
+                ipc('search', 'open'); time.sleep(.5)
+                query = ipc('search', 'testQuery')
+                assert query == '', repr(query)
+                ipc('search', 'close'); time.sleep(.3)
+                print('PASS launcher reopens without stale help or clipboard query state', flush=True)
             for method, group in [('colors', 'Interface'), ('barStyle', 'Bar'), ('barLayout', 'Bar')]:
                 ipc('desktop', method)
-                wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation')
+                wait(lambda s: s['settings'] and s['dashboardPage'] == 4 and s['dashboardGroup'] == group, 'dashboard section navigation ' + method)
                 time.sleep(1.5)
                 assert int(ipc('dashboard-test', 'cards')) > 0, (method, group, 'Empty settings group')
                 ipc('settings', 'close')
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                ipc('settings', 'open')
+                wait(lambda state: state['settings'], 'open settings for shared-state checks')
+                time.sleep(.3)
+                ipc('test', 'resize', 390, 470)
+                ipc('tool', 'testConfig', 'bar.verbose', 'true')
+                settings_file = root / 'config/hyprland-rice/end4/config.json'
+                wait(lambda _: json.loads(settings_file.read_text())['bar']['verbose'] and json.loads(settings_file.read_text())['background']['widgets']['todo']['width'] == 390, 'concurrent settings fields survive')
+                ipc('test', 'resize', 380, 470)
+                ipc('tool', 'testConfig', 'bar.verbose', 'false')
+                wait(lambda _: not json.loads(settings_file.read_text())['bar']['verbose'], 'reset bar fixture')
+                for _ in range(50):
+                    state = json.loads(ipc('tool', 'testTaskState'))
+                    if not state['busy'] and state['tasks'] == 25: break
+                    time.sleep(.1)
+                assert ipc('tool', 'testTasks', 'delete', json.dumps({'id':last_id})) == 'true'
+                wait(lambda state: state['tasks'] == 24 and state['undo'], 'tool delete updates main task state')
+                assert ipc('desktop', 'task', 'undo', '{}') == 'true'
+                wait(lambda state: state['tasks'] == 25, 'main undo restores tool deletion')
+                ipc('desktop', 'closePanels')
+                time.sleep(.7)
+                ipc('test', 'notify')
+                wait(lambda state: state['notificationCount'] == 1, 'main notification owner')
+                ipc('sidebarRight', 'open')
+                wait(lambda state: state['notifications'], 'notification panel proxy')
+                for _ in range(50):
+                    if ipc('tool', 'testNotifications') == '1': break
+                    time.sleep(.1)
+                else: raise AssertionError('Notification proxy did not receive main data')
+                ipc('tool', 'testDismissAll')
+                wait(lambda state: state['notificationCount'] == 0, 'notification dismissal forwards to owner')
+                ipc('desktop', 'closePanels'); time.sleep(.7)
+                ipc('desktopMenu', 'open')
+                wait(lambda state: state['desktopMenu'], 'native desktop menu')
+                assert ipc('tool', 'testMenu') == 'true', 'Desktop widget menu did not construct'
+                ipc('desktop', 'closePanels'); time.sleep(.7)
+                print('PASS native desktop widget menu remains accessible', flush=True)
+                print('PASS tool settings merge, shared task undo and notification ownership', flush=True)
             print('PASS dashboard, targeted color/bar settings, native shortcut help, wallpaper and notifications IPC', flush=True)
             stop()
             process = start()
@@ -198,9 +291,12 @@ def run(output):
             log = (root / 'shell.log').read_text(errors='replace')
             errors = [line for line in log.splitlines() if 'Failed to load configuration' in line or 'ReferenceError:' in line or 'TypeError:' in line]
             assert not errors, '\n'.join(errors)
+            assert not (root / 'python-invocations.log').exists(), 'Native UI attempted to invoke Python: ' + (root / 'python-invocations.log').read_text() if (root / 'python-invocations.log').exists() else ''
         except Exception:
             subprocess.run(['grim', '-o', output, '/tmp/rice-end4-failed.png'], check=False)
             shutil.copy2(root / 'shell.log', '/tmp/rice-end4-failed.log')
+            tool_log = root / 'state/hyprland-rice/end4/tools.log'
+            if tool_log.exists(): shutil.copy2(tool_log, '/tmp/rice-lite-tools-failed.log')
             shutil.copy2(root / 'commands.log', '/tmp/rice-end4-failed-commands.log')
             shutil.copy2(root / 'config/hyprland-rice/end4/config.json', '/tmp/rice-end4-failed-config.json')
             raise

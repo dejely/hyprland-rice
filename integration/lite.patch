@@ -1,0 +1,2042 @@
+--- a/RiceBridge.qml
++++ b/RiceBridge.qml
+@@ -5,28 +5,37 @@
+ import qs.services
+ import qs.modules.common
+ Scope {
++    ToolsBridge { id: tools }
+     Process {
+         id: paletteWorker
+         command: ["python3", Quickshell.shellPath("integration/palette.py"),
+             Directories.config.toString().replace("file://", "") + "/quickshell/qml_color.json", Directories.generatedMaterialThemePath]
+     }
+-    Timer { interval: 1000; running: true; repeat: true; triggeredOnStart: true; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; } }
++    FileView {
++        path: Directories.config.toString().replace("file://", "") + "/quickshell/qml_color.json"
++        watchChanges: true
++        onFileChanged: paletteDebounce.restart()
++    }
++    Timer { id: paletteDebounce; interval: 150; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; else restart(); } }
++    Component.onCompleted: { paletteDebounce.start();  }
++
+ 
+     IpcHandler {
+         target: "desktop"
+         function status(): string {
+             return JSON.stringify({busy: Todo.busy, undo: !!Todo.deleted, error: Todo.error, tasks: Todo.list.length,
+-                completed: Todo.list.filter(t => t.done).length, accent: String(Appearance.m3colors.m3primary),
+-                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen})
++                completed: Todo.list.filter(t => t.done).length, notificationCount: Notifications.list.length, unreadNotifications: Notifications.unread, accent: String(Appearance.m3colors.m3primary),
++                dashboardPage: GlobalStates.dashboardPage, dashboardGroup: GlobalStates.dashboardGroup, settings: GlobalStates.settingsOpen, overview: GlobalStates.overviewOpen, wallpaperSelector: GlobalStates.wallpaperSelectorOpen, notifications: GlobalStates.sidebarRightOpen, desktopMenu: GlobalStates.desktopMenuOpen})
+         }
+-        function task(action: string, payload: string): bool { return Todo.transact(action, payload); }
++        function task(action: string, payload: string): bool { return action === "undo" ? Todo.undo() : Todo.transact(action, payload); }
++        function closePanels(): void { tools.request("close"); }
+         function refreshTasks(): void { Todo.refresh(); }
+-        function settings(page: string): void { GlobalStates.openSettingsAt(page, "", "", ""); }
+-        function barStyle(): void { GlobalStates.openSettingsAt("bar", "", "Positioning & Styles", ""); }
+-        function barLayout(): void { GlobalStates.openSettingsAt("bar", "", "Bar layout", ""); }
+-        function colors(): void { GlobalStates.openSettingsAt("interface", "", "Wallpaper colors", ""); }
++        function settings(page: string): void { tools.request("settings-target", JSON.stringify({page:page})); }
++        function barStyle(): void { tools.request("settings-target", JSON.stringify({page:"bar",section:"Positioning & Styles"})); }
++        function barLayout(): void { tools.request("settings-target", JSON.stringify({page:"bar",section:"Bar layout"})); }
++        function colors(): void { tools.request("settings-target", JSON.stringify({page:"interface",section:"Wallpaper colors"})); }
+         function wallpaper(path: string): void { Config.options.background.wallpaperPath = path; }
+-        function clipboard(): void { GlobalStates.overviewOpen = true; GlobalStates.searchOpen = true; }
+-        function help(): void { GlobalStates.overviewOpen = true; }
++        function clipboard(): void { tools.request("clipboard-toggle"); }
++        function help(): void { tools.request("help"); }
+     }
+ }
+--- a/modules/common/Config.qml
++++ b/modules/common/Config.qml
+@@ -7,10 +7,10 @@
+ 
+ Singleton {
+     id: root
+-    property string filePath: Directories.shellConfigPath
++    property string filePath: Quickshell.env("RICE_SETTINGS_PATH") || Directories.shellConfigPath
+     property alias options: configOptionsJsonAdapter
+     property bool ready: false
+-    property int readWriteDelay: 50 // milliseconds
++    property int readWriteDelay: 0 // milliseconds
+     property bool blockWrites: false
+ 
+     function setNestedValue(nestedKey, value) {
+@@ -887,7 +887,7 @@
+                 property string bannerImage: ""
+                 property real bannerFocusX: 0.5
+                 property real bannerFocusY: 0.5
+-                property bool keepRightSidebarLoaded: true
++                property bool keepRightSidebarLoaded: false
+                 property string leftLastPage: "home"
+                 property bool leftRememberPage: true
+                 property JsonObject translator: JsonObject {
+--- a/modules/common/widgets/StyledRectangularShadow.qml
++++ b/modules/common/widgets/StyledRectangularShadow.qml
+@@ -1,14 +1,23 @@
+ import QtQuick
+ import QtQuick.Effects
+ import qs.modules.common
+-
+-RectangularShadow {
++Item {
++    id: root
+     required property var target
++    property real radius: target.radius ?? 0
++    property real blur: 0.9 * Appearance.sizes.elevationMargin
++    property vector2d offset: Qt.vector2d(0, 1)
++    property real spread: 1
++    property color color: Appearance.colors.colShadow
++    property bool cached: true
+     anchors.fill: target
+-    radius: target.radius
+-    blur: 0.9 * Appearance.sizes.elevationMargin
+-    offset: Qt.vector2d(0.0, 1.0)
+-    spread: 1
+-    color: Appearance.colors.colShadow
+-    cached: true
++    Loader {
++        anchors.fill: parent
++        active: root.visible && root.opacity > 0 && root.width > 0 && root.height > 0
++        sourceComponent: RectangularShadow {
++            anchors.fill: parent
++            radius: root.radius; blur: root.blur; offset: root.offset
++            spread: root.spread; color: root.color; cached: root.cached
++        }
++    }
+ }
+--- a/modules/common/widgets/ThumbnailImage.qml
++++ b/modules/common/widgets/ThumbnailImage.qml
+@@ -20,7 +20,7 @@
+         const resolvedUrlWithoutFileProtocol = FileUtils.trimFileProtocol(`${Qt.resolvedUrl(sourcePath)}`);
+         const encodedUrlWithoutFileProtocol = resolvedUrlWithoutFileProtocol.split("/").map(part => encodeURIComponent(part)).join("/");
+         const md5Hash = Qt.md5(`file://${encodedUrlWithoutFileProtocol}`);
+-        return `${Directories.genericCache}/thumbnails/${thumbnailSizeName}/${md5Hash}.png`;
++        return `${Directories.cache}/thumbnails/${thumbnailSizeName}/${md5Hash}.png`;
+     }
+     source: thumbnailPath
+ 
+@@ -33,10 +33,17 @@
+         animation: Appearance.animation.elementMoveFast.numberAnimation.createObject(this)
+     }
+ 
+-    onSourceSizeChanged: {
+-        if (!root.generateThumbnail) return;
+-        thumbnailGeneration.running = false;
+-        thumbnailGeneration.running = true;
++    onSourceSizeChanged: thumbnailRequest.restart()
++    onSourcePathChanged: thumbnailRequest.restart()
++    Component.onCompleted: thumbnailRequest.start()
++    Timer {
++        id: thumbnailRequest
++        interval: 20
++        onTriggered: {
++            if (!root.generateThumbnail || !root.sourcePath || root.sourceSize.width <= 0 || root.sourceSize.height <= 0) return;
++            thumbnailGeneration.running = false;
++            thumbnailGeneration.running = true;
++        }
+     }
+     Process {
+         id: thumbnailGeneration
+@@ -46,15 +53,7 @@
+             // Paths are passed as positional args ($1..$3), never interpolated into the
+             // script, so quotes in file names can neither break nor inject into it.
+             // Exit codes: 0 = already cached, 1 = generated, 2 = failed.
+-            return ["bash", "-c", `
+-                thumb="$1"; src="$2"; max="$3"; mkdir -p "$(dirname "$thumb")"
+-                [ -f "$thumb" ] && exit 0
+-                tmp="$thumb.$$.tmp.png"
+-                trap 'kill "$pid" 2>/dev/null; rm -f "$tmp"' EXIT
+-                magick "$src" -resize "$max"x"$max" "$tmp" & pid=$!
+-                wait "$pid" && mv "$tmp" "$thumb" && exit 1
+-                exit 2
+-            `, "_", thumbPath, root.sourcePath, `${maxSize}`]
++            return ["bash", Quickshell.shellPath("integration/thumbnail.sh"), FileUtils.trimFileProtocol(root.sourcePath), thumbPath, `${maxSize}`]
+         }
+         onExited: (exitCode, exitStatus) => {
+             if (exitCode === 1) {
+--- a/modules/common/widgets/WidgetCard.qml
++++ b/modules/common/widgets/WidgetCard.qml
+@@ -21,7 +21,10 @@
+         visible: root.shadowed
+     }
+ 
+-    FrostedGlass {
++    Loader {
++        anchors.fill: parent
++        active: root.glass && Config.options.background.widgets.glass.enable
++        sourceComponent: FrostedGlass {
+         anchors.fill: parent
+         blurSource: root.widget.wallpaperItem
+         cardRadius: root.radius
+@@ -30,8 +33,12 @@
+         trackY: root.widget.y + root.y
+         visible: root.glass && Config.options.background.widgets.glass.enable
+     }
++    }
+ 
+-    FastBlurred {
++    Loader {
++        anchors.fill: parent
++        active: root.blurred && !(root.glass && Config.options.background.widgets.glass.enable)
++        sourceComponent: FastBlurred {
+         anchors.fill: parent
+         anchors.margins: root.blurred ? -1 : 0
+         blurSource: root.widget.wallpaperItem
+@@ -42,4 +49,5 @@
+         trackY: root.widget.y + root.y
+         visible: root.blurred && !(root.glass && Config.options.background.widgets.glass.enable)
+     }
++    }
+ }
+--- a/modules/ii/background/Background.qml
++++ b/modules/ii/background/Background.qml
+@@ -109,7 +109,7 @@
+         }
+ 
+         Component.onCompleted: {
+-            previousWallpaper.source = bgRoot.wallpaperSafetyTriggered ? "" : bgRoot.wallpaperPath
++            previousWallpaper.source = ""
+             wallpaper.source = bgRoot.wallpaperSafetyTriggered ? "" : bgRoot.wallpaperPath
+             bgRoot.currentWallpaperSource = bgRoot.wallpaperPath
+             bgRoot.previousWallpaperSource = ""
+@@ -134,7 +134,7 @@
+             if (bgRoot.wallpaperAnimation === "" || GlobalStates.startupLockPending) {
+                 bgRoot.transitionPending = false
+                 wallpaper.source = wallpaperPath
+-                previousWallpaper.source = wallpaperPath
++                previousWallpaper.source = ""
+                 bgRoot.currentWallpaperSource = wallpaperPath
+                 if (!bgRoot.wallpaperIsVideo) return
+                 bgRoot.videoRevealed = true
+@@ -166,7 +166,7 @@
+             duration: 1000
+             easing.type: Easing.InOutQuad
+             onFinished: {
+-                previousWallpaper.source = bgRoot.currentWallpaperSource
++                previousWallpaper.source = ""
+                 bgRoot.previousWallpaperSource = ""
+                 bgRoot.transitionProgress = 1.0
+                 bgRoot.videoRevealed = bgRoot.wallpaperIsVideo
+@@ -219,10 +219,10 @@
+                 // Same size as `wallpaper` so this synchronous Image reuses its cached pixmap
+                 sourceSize: bgRoot.wallpaperSourceSize
+                 cache: true
+-                mipmap: true
++                mipmap: false
+                 smooth: true
+-                layer.enabled: true
+-                visible: !bgRoot.videoRevealed
++                layer.enabled: false
++                visible: !bgRoot.videoRevealed && bgRoot.transitionProgress < 1
+                 opacity: bgRoot.videoRevealed ? 0 : 1
+             }
+ 
+@@ -233,9 +233,9 @@
+                 sourceSize: bgRoot.wallpaperSourceSize
+                 cache: true
+                 smooth: true
+-                mipmap: true
++                mipmap: false
+                 asynchronous: true
+-                layer.enabled: bgRoot.wallpaperIsVideo ? false : true
++                layer.enabled: false
+                 visible: !blurLoader.active && !bgRoot.videoRevealed
+                     && (bgRoot.wallpaperAnimation === "" || bgRoot.transitionProgress >= 1.0)
+                     && !centeredWallpaper.centeredHidesFullWallpaper
+--- a/modules/ii/background/CenteredWallpaper.qml
++++ b/modules/ii/background/CenteredWallpaper.qml
+@@ -54,7 +54,7 @@
+     // so the layer + OpacityMask + 2D canvases are ~6x cheaper per frame;
+     // the scale below compensates, so the silhouette and the picture inside
+     // stay identical (edges soften only while the shape outgrows the layer).
+-    property real centeredShapeRenderSize: Math.max(1, Math.ceil(
++    property real centeredShapeRenderSize: !root.centeredWallpaperEnabled ? 1 : Math.max(1, Math.ceil(
+         Math.hypot(root.screen.width, root.screen.height)))
+ 
+     // 0 = locked (wallpaper rests centered inside the shape), 1 = unlocked
+@@ -219,7 +219,7 @@
+             }
+         }
+ 
+-        layer.enabled: true
++        layer.enabled: root.centeredWallpaperEnabled
+         layer.effect: OpacityMask {
+             maskSource: MaterialShape {
+                 width: centeredWallpaperShapeItem.width
+@@ -233,7 +233,7 @@
+             width: root.width
+             height: root.height
+             anchors.centerIn: parent
+-            source: root.shapeImagePath
++            source: root.centeredWallpaperEnabled ? root.shapeImagePath : ""
+             fillMode: Image.PreserveAspectCrop
+             mipmap: true
+             antialiasing: true
+--- a/modules/ii/background/WidgetsLoader.qml
++++ b/modules/ii/background/WidgetsLoader.qml
+@@ -10,16 +10,10 @@
+ import qs.modules.ii.background.widgets.clock
+ import qs.modules.ii.background.widgets.weather
+ import qs.modules.ii.background.widgets.media
+-import qs.modules.ii.background.widgets.images
+ import qs.modules.ii.background.widgets.resources
+-import qs.modules.ii.background.widgets.visualizer
+ import qs.modules.ii.background.widgets.calendar
+-import qs.modules.ii.background.widgets.worldclock
+ import qs.modules.ii.background.widgets.usercard
+-import qs.modules.ii.background.widgets.notes
+ import qs.modules.ii.background.widgets.todo
+-import qs.modules.ii.background.widgets.timers
+-import qs.modules.ii.background.widgets.customtext
+ 
+ Item {
+     id: root
+@@ -33,22 +27,13 @@
+ 
+     Repeater {
+         model: [
+-            { key: "visualizer" },
+-            { key: "customImage" },
+-            { key: "imageCard" },
+-            { key: "sticker" },
+             { key: "calendar" },
+             { key: "weather" },
+             { key: "clock", alwaysOnLock: true },
+-            { key: "notes" },
+             { key: "media" },
+-            { key: "images" },
+             { key: "resources" },
+-            { key: "worldClock" },
+             { key: "userCard" },
+             { key: "todo" },
+-            { key: "timers" },
+-            { key: "customText" },
+         ]
+ 
+         delegate: FadeLoader {
+@@ -65,22 +50,13 @@
+ 
+             sourceComponent: {
+                 switch (loaderDelegate.modelData.key) {
+-                    case "visualizer":  return visualizerComp
+-                    case "customImage": return customImageComp
+-                    case "imageCard":   return imageCardComp
+-                    case "sticker":     return stickerComp
+                     case "calendar":    return calendarComp
+                     case "weather":     return weatherComp
+                     case "clock":       return clockComp
+-                    case "notes":       return notesComp
+                     case "media":       return mediaComp
+-                    case "images":      return imagesComp
+                     case "resources":   return resourcesComp
+-                    case "worldClock":  return worldClockComp
+                     case "userCard":    return userCardComp
+                     case "todo":        return todoComp
+-                    case "timers":      return timersComp
+-                    case "customText":  return customTextComp
+                 }
+                 return null
+             }
+@@ -102,51 +78,10 @@
+         }
+     }
+ 
+-    Component {
+-        id: visualizerComp
+-        VisualizerWidget {
+-            showSelectionBorder: false
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            pinnedBottom: true
+-        }
+-    }
+-    Component {
+-        id: imageCardComp
+-        ImageCardWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
+-    Component {
+-        id: customImageComp
+-        CustomImage {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
+-    Component {
+-        id: stickerComp
+-        StickerWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
++
++
++
++
+     Component {
+         id: calendarComp
+         CalendarWidget {
+@@ -181,17 +116,7 @@
+             wallpaperItem: root.wallpaperItem
+         }
+     }
+-    Component {
+-        id: notesComp
+-        NotesWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
++
+     Component {
+         id: mediaComp
+         MediaWidget {
+@@ -203,17 +128,7 @@
+             wallpaperItem: root.wallpaperItem
+         }
+     }
+-    Component {
+-        id: imagesComp
+-        ImageConverterWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
++
+     Component {
+         id: resourcesComp
+         ResourcesWidget {
+@@ -225,17 +140,7 @@
+             wallpaperItem: root.wallpaperItem
+         }
+     }
+-    Component {
+-        id: worldClockComp
+-        WorldClockWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
++
+     Component {
+         id: userCardComp
+         UserCardWidget {
+@@ -258,26 +163,6 @@
+             wallpaperItem: root.wallpaperItem
+         }
+     }
+-    Component {
+-        id: timersComp
+-        TimerWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
+-    Component {
+-        id: customTextComp
+-        CustomTextWidget {
+-            screenWidth: root.screen.width
+-            screenHeight: root.screen.height
+-            scaledScreenWidth: root.screen.width
+-            scaledScreenHeight: root.screen.height
+-            wallpaperScale: 1
+-            wallpaperItem: root.wallpaperItem
+-        }
+-    }
+-}
+\ No newline at end of file
++
++
++}
+--- a/modules/ii/background/widgets/weather/WeatherWidget.qml
++++ b/modules/ii/background/widgets/weather/WeatherWidget.qml
+@@ -92,7 +92,7 @@
+                 anchors.margins: 18
+                 StyledText { text: "Set your weather city"; font.pixelSize: 18 }
+                 StyledText { text: "Choose a city in Services → Weather." }
+-                Button { text: "Weather settings"; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
++                RippleButton { buttonText: "Weather settings"; implicitHeight: 30; onClicked: GlobalStates.openSettingsAt("services", "Weather", "Weather", "") }
+             }
+         }
+         // 1x1 
+--- a/modules/ii/desktopMenu/DesktopMenu.qml
++++ b/modules/ii/desktopMenu/DesktopMenu.qml
+@@ -15,6 +15,7 @@
+ 
+ Scope {
+     id: root
++    readonly property var window: desktopMenuLoader.item
+ 
+     function openCentered(shouldOpen) {
+         if (!shouldOpen) {
+@@ -73,6 +74,7 @@
+ 
+     // Menu window
+     Loader {
++        id: desktopMenuLoader
+         active: GlobalStates.desktopMenuOpen
+         sourceComponent: PanelWindow {
+             id: menuWindow
+@@ -187,8 +189,6 @@
+                             model: [
+                                 { icon: "format_paint", label: "Wallpaper & style", kind: "wallpaper" },
+                                 { icon: "widgets", label: "Widgets", kind: "widgets" },
+-                                { icon: "stacks", label: "DropShelf", kind: "dropshelf" },
+-                                { icon: "video_template", label: "Live Wallpaper", kind: "live" },
+                                 { icon: "settings", label: "Settings", kind: "settings" }
+                             ]
+ 
+@@ -197,7 +197,7 @@
+                                 required property var modelData
+                                 required property int index
+                                 readonly property bool isFirst: index === 0
+-                                readonly property bool isLast: index === 4
++                                readonly property bool isLast: index === 2
+ 
+                                 Layout.fillWidth: true
+                                 implicitHeight: 56
+@@ -322,4 +322,4 @@
+             }
+         }
+     }
+-}
+\ No newline at end of file
++}
+--- a/modules/ii/mediaControls/MediaControls.qml
++++ b/modules/ii/mediaControls/MediaControls.qml
+@@ -265,17 +265,17 @@
+         target: "mediaControls"
+ 
+         function toggle(): void {
+-            mediaControlsLoader.active = !mediaControlsLoader.active;
++            GlobalStates.mediaControlsOpen = !GlobalStates.mediaControlsOpen;
+             if (mediaControlsLoader.active)
+                 Notifications.timeoutAll();
+         }
+ 
+         function close(): void {
+-            mediaControlsLoader.active = false;
++            GlobalStates.mediaControlsOpen = false;
+         }
+ 
+         function open(): void {
+-            mediaControlsLoader.active = true;
++            GlobalStates.mediaControlsOpen = true;
+             Notifications.timeoutAll();
+         }
+     }
+--- a/modules/ii/notificationPopup/NotificationPopup.qml
++++ b/modules/ii/notificationPopup/NotificationPopup.qml
+@@ -14,7 +14,7 @@
+     PanelWindow {
+         id: root
+         visible: (Notifications.popupList.length > 0) && !GlobalStates.screenLocked && !GlobalStates.dynamicIslandEnabled
+-        screen: Quickshell.screens.find(s => s.name === Hyprland.focusedMonitor?.name) ?? null
++        screen: Quickshell.screens.find(s => s.name === (Quickshell.env("RICE_TEST_OUTPUT") || Hyprland.focusedMonitor?.name)) ?? null
+ 
+         property string position: {
+             const raw = Config.options.notifications.position ?? "top_right"
+--- a/modules/ii/overview/Overview.qml
++++ b/modules/ii/overview/Overview.qml
+@@ -14,154 +14,20 @@
+ Scope {
+     id: overviewScope
+     property bool dontAutoCancelSearch: false
++    property string pendingSearch: ""
++    Connections { target: GlobalStates; function onOverviewOpenChanged() { if (!GlobalStates.overviewOpen) { overviewScope.dontAutoCancelSearch = false; overviewScope.pendingSearch = ""; LauncherSearch.query = ""; } } }
++    function setQuery(query) {
++        overviewScope.dontAutoCancelSearch = true; pendingSearch = query;
++        GlobalStates.overviewOpen = true;
++        if (panelWindow) { panelWindow.setSearchingText(query); pendingSearch = ""; }
++    }
+ 
+-    PanelWindow {
+-        id: panelWindow
+-        property string searchingText: ""
+-        readonly property HyprlandMonitor monitor: Hyprland.monitorFor(panelWindow.screen)
+-        readonly property bool barCenterOnly: Config.options.bar.layouts.leftLayout.length === 0
+-            && Config.options.bar.layouts.rightLayout.length === 0
+-            && !Config.options.bar.vertical
+-
+-        readonly property bool barOverlapActive: panelWindow.barCenterOnly
+-            && Config.options.bar.centerOnlyReserveFrame
+-            && !Config.options.bar.bottom
+-            && !Config.options.bar.autoHide.enable
+-        property bool monitorIsFocused: (Hyprland.focusedMonitor?.id == monitor?.id)
+-        visible: GlobalStates.overviewOpen
+-
+-        WlrLayershell.namespace: "quickshell:overview"
+-        WlrLayershell.layer: WlrLayer.Top
+-        WlrLayershell.keyboardFocus: GlobalStates.overviewOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+-        color: "transparent"
+-
+-        // While a window preview is being dragged, take input over the whole screen.
+-        // Otherwise the pointer leaves the mask, Hyprland ends the focus grab and the overview closes.
+-        readonly property bool windowDragging: (overviewLoader.item?.draggingFromWorkspace ?? -1) !== -1
+-        mask: Region {
+-            item: GlobalStates.overviewOpen ? (panelWindow.windowDragging ? fullscreenMask : columnMask) : null
+-            Region {
+-                item: searchWidget.clipboardPopover.visible ? searchWidget.clipboardPopover : null
+-            }
+-        }
+-
+-        anchors {
+-            top: true
+-            bottom: true
+-            left: true
+-            right: true
+-        }
+-
+-        Connections {
+-            target: GlobalStates
+-            function onOverviewOpenChanged() {
+-                if (!GlobalStates.overviewOpen) {
+-                    searchWidget.disableExpandAnimation();
+-                    overviewScope.dontAutoCancelSearch = false;
+-                    GlobalFocusGrab.dismiss();
+-                } else {
+-                    if (!overviewScope.dontAutoCancelSearch) {
+-                        searchWidget.cancelSearch();
+-                    }
+-                    GlobalFocusGrab.addDismissable(panelWindow);
+-                }
+-            }
+-        }
+-
+-        Connections {
+-            target: GlobalFocusGrab
+-            function onDismissed() {
+-                GlobalStates.overviewOpen = false;
+-            }
+-        }
+-        implicitWidth: columnLayout.implicitWidth
+-        implicitHeight: columnLayout.implicitHeight
+-
+-        function setSearchingText(text) {
+-            searchWidget.setSearchingText(text);
+-            searchWidget.focusFirstItem();
+-        }
+-
+-        Item {
+-            id: fullscreenMask
+-            anchors.fill: parent
+-        }
+-
+-        // Unscaled stand-in for columnLayout. Region ignores the open-animation scale,
+-        // so masking columnLayout directly leaves its outer edges unclickable.
+-        Item {
+-            id: columnMask
+-            x: columnLayout.x
+-            y: columnLayout.y
+-            width: columnLayout.width
+-            height: columnLayout.height
+-        }
+-
+-        Column {
+-            id: columnLayout
+-            visible: GlobalStates.overviewOpen
+-            opacity: GlobalStates.overviewOpen ? 1 : 0
+-            scale: GlobalStates.overviewOpen ? 1 : 0.85
+-            transformOrigin: Item.Top
+-            anchors {
+-                horizontalCenter: parent.horizontalCenter
+-                top: parent.top
+-                topMargin: panelWindow.barOverlapActive
+-                    ? Appearance.sizes.barHeight - Config.options.bar.frameThickness
+-                    : 0
+-            }
+-            spacing: -8
+-
+-            Behavior on opacity {
+-                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
+-            }
+-            Behavior on scale {
+-                NumberAnimation { duration: 400; easing.type: Easing.BezierSpline; easing.bezierCurve: Appearance.animationCurves.expressiveDefaultSpatial }
+-            }
+-
+-            Keys.onPressed: event => {
+-                if (event.key === Qt.Key_Escape) {
+-                    GlobalStates.overviewOpen = false;
+-                } else if (event.key === Qt.Key_Left) {
+-                    if (!panelWindow.searchingText)
+-                        Hyprland.dispatch("workspace r-1");
+-                } else if (event.key === Qt.Key_Right) {
+-                    if (!panelWindow.searchingText)
+-                        Hyprland.dispatch("workspace r+1");
+-                }
+-            }
+-
+-            SearchWidget {
+-                id: searchWidget
+-                anchors.horizontalCenter: parent.horizontalCenter
+-                Synchronizer on searchingText {
+-                    property alias source: panelWindow.searchingText
+-                }
+-            }
+-
+-            Loader {
+-                id: overviewLoader
+-                active: GlobalStates.overviewOpen && (Config?.options.overview.enable ?? true)
+-                sourceComponent: (Config?.options.overview.style ?? "default") === "niri" ? niriComponent : defaultComponent
+-
+-                Component {
+-                    id: defaultComponent
+-                    OverviewWidget {
+-                        screen: panelWindow.screen
+-                        visible: (panelWindow.searchingText == "")
+-                    }
+-                }
+-
+-                Component {
+-                    id: niriComponent
+-                    NiriOverview {
+-                        screen: panelWindow.screen
+-                        panelWindow: panelWindow
+-                        visible: (panelWindow.searchingText == "")
+-                    }
+-                }
+-            }
+-        }
++    property var panelWindow: overviewPanel.item
++    Loader {
++        id: overviewPanel
++        active: GlobalStates.overviewOpen
++        source: active ? Qt.resolvedUrl("RiceOverviewPanel.qml") : ""
++        onLoaded: { item.overviewScope = overviewScope; item.setSearchingText(overviewScope.pendingSearch || ""); overviewScope.pendingSearch = ""; }
+     }
+ 
+     function toggleClipboard() {
+@@ -170,7 +36,7 @@
+             return;
+         }
+         overviewScope.dontAutoCancelSearch = true;
+-        panelWindow.setSearchingText(Config.options.search.prefix.clipboard);
++        overviewScope.setQuery(Config.options.search.prefix.clipboard);
+         GlobalStates.overviewOpen = true;
+     }
+ 
+@@ -180,7 +46,7 @@
+             return;
+         }
+         overviewScope.dontAutoCancelSearch = true;
+-        panelWindow.setSearchingText(Config.options.search.prefix.emojis);
++        overviewScope.setQuery(Config.options.search.prefix.emojis);
+         GlobalStates.overviewOpen = true;
+     }
+ 
+@@ -190,7 +56,7 @@
+             return;
+         }
+         overviewScope.dontAutoCancelSearch = true;
+-        panelWindow.setSearchingText(Config.options.search.prefix.symbols);
++        overviewScope.setQuery(Config.options.search.prefix.symbols);
+         GlobalStates.overviewOpen = true;
+     }
+ 
+@@ -212,7 +78,7 @@
+         function toggleReleaseInterrupt() {
+             GlobalStates.superReleaseMightTrigger = false;
+         }
+-        function help() { GlobalStates.overviewOpen = true; Qt.callLater(() => panelWindow.setSearchingText("<")); }
++        function help() { overviewScope.setQuery("<"); }
+         function emojiToggle() { overviewScope.toggleEmojis(); }
+         function clipboardToggle() {
+             overviewScope.toggleClipboard();
+--- /dev/null
++++ b/modules/ii/overview/RiceOverviewPanel.qml
+@@ -0,0 +1,175 @@
++import qs
++import qs.services
++import qs.modules.common
++import qs.modules.common.widgets
++import Qt.labs.synchronizer
++import QtQuick
++import QtQuick.Controls
++import QtQuick.Layouts
++import Quickshell
++import Quickshell.Io
++import Quickshell.Wayland
++import Quickshell.Hyprland
++
++PanelWindow {
++        id: overviewWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
++        property var overviewScope
++        property bool grabAfterFrame: true
++        Connections {
++            target: overviewWindow.contentItem.Window.window
++            function onFrameSwapped() {
++                if (overviewWindow.grabAfterFrame && GlobalStates.overviewOpen) {
++                    overviewWindow.grabAfterFrame = false;
++                    GlobalFocusGrab.addDismissable(overviewWindow);
++                }
++            }
++        }
++        Component.onCompleted: overviewWindow.grabAfterFrame = true
++        Component.onDestruction: GlobalFocusGrab.removeDismissable(overviewWindow)
++        property string searchingText: ""
++        readonly property HyprlandMonitor monitor: Hyprland.monitorFor(overviewWindow.screen)
++        readonly property bool barCenterOnly: Config.options.bar.layouts.leftLayout.length === 0
++            && Config.options.bar.layouts.rightLayout.length === 0
++            && !Config.options.bar.vertical
++
++        readonly property bool barOverlapActive: overviewWindow.barCenterOnly
++            && Config.options.bar.centerOnlyReserveFrame
++            && !Config.options.bar.bottom
++            && !Config.options.bar.autoHide.enable
++        property bool monitorIsFocused: (Hyprland.focusedMonitor?.id == monitor?.id)
++        visible: GlobalStates.overviewOpen
++
++        WlrLayershell.namespace: "quickshell:overview"
++        WlrLayershell.layer: WlrLayer.Top
++        WlrLayershell.keyboardFocus: GlobalStates.overviewOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
++        color: "transparent"
++
++        // While a window preview is being dragged, take input over the whole screen.
++        // Otherwise the pointer leaves the mask, Hyprland ends the focus grab and the overview closes.
++        readonly property bool windowDragging: (overviewLoader.item?.draggingFromWorkspace ?? -1) !== -1
++        mask: Region {
++            item: GlobalStates.overviewOpen ? (overviewWindow.windowDragging ? fullscreenMask : columnMask) : null
++            Region {
++                item: searchWidget.clipboardPopover.visible ? searchWidget.clipboardPopover : null
++            }
++        }
++
++        anchors {
++            top: true
++            bottom: true
++            left: true
++            right: true
++        }
++
++        Connections {
++            target: GlobalStates
++            function onOverviewOpenChanged() {
++                if (!GlobalStates.overviewOpen) {
++                    searchWidget.disableExpandAnimation();
++                    overviewScope.dontAutoCancelSearch = false;
++                    GlobalFocusGrab.dismiss();
++                } else {
++                    if (!overviewScope.dontAutoCancelSearch) {
++                        searchWidget.cancelSearch();
++                    }
++                    overviewWindow.grabAfterFrame = true;
++                }
++            }
++        }
++
++        Connections {
++            target: GlobalFocusGrab
++            function onDismissed() {
++                GlobalStates.overviewOpen = false;
++            }
++        }
++        implicitWidth: columnLayout.implicitWidth
++        implicitHeight: columnLayout.implicitHeight
++
++        function setSearchingText(text) {
++            searchWidget.setSearchingText(text);
++            searchWidget.focusFirstItem();
++        }
++
++        Item {
++            id: fullscreenMask
++            anchors.fill: parent
++        }
++
++        // Unscaled stand-in for columnLayout. Region ignores the open-animation scale,
++        // so masking columnLayout directly leaves its outer edges unclickable.
++        Item {
++            id: columnMask
++            x: columnLayout.x
++            y: columnLayout.y
++            width: columnLayout.width
++            height: columnLayout.height
++        }
++
++        Column {
++            id: columnLayout
++            visible: GlobalStates.overviewOpen
++            opacity: GlobalStates.overviewOpen ? 1 : 0
++            scale: GlobalStates.overviewOpen ? 1 : 0.85
++            transformOrigin: Item.Top
++            anchors {
++                horizontalCenter: parent.horizontalCenter
++                top: parent.top
++                topMargin: overviewWindow.barOverlapActive
++                    ? Appearance.sizes.barHeight - Config.options.bar.frameThickness
++                    : 0
++            }
++            spacing: -8
++
++            Behavior on opacity {
++                NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
++            }
++            Behavior on scale {
++                NumberAnimation { duration: 400; easing.type: Easing.BezierSpline; easing.bezierCurve: Appearance.animationCurves.expressiveDefaultSpatial }
++            }
++
++            Keys.onPressed: event => {
++                if (event.key === Qt.Key_Escape) {
++                    GlobalStates.overviewOpen = false;
++                } else if (event.key === Qt.Key_Left) {
++                    if (!overviewWindow.searchingText)
++                        Hyprland.dispatch("workspace r-1");
++                } else if (event.key === Qt.Key_Right) {
++                    if (!overviewWindow.searchingText)
++                        Hyprland.dispatch("workspace r+1");
++                }
++            }
++
++            SearchWidget {
++                id: searchWidget
++                anchors.horizontalCenter: parent.horizontalCenter
++                Synchronizer on searchingText {
++                    property alias source: overviewWindow.searchingText
++                }
++            }
++
++            Loader {
++                id: overviewLoader
++                active: GlobalStates.overviewOpen && (Config?.options.overview.enable ?? true)
++                sourceComponent: (Config?.options.overview.style ?? "default") === "niri" ? niriComponent : defaultComponent
++
++                Component {
++                    id: defaultComponent
++                    OverviewWidget {
++                        screen: overviewWindow.screen
++                        visible: (overviewWindow.searchingText == "")
++                    }
++                }
++
++                Component {
++                    id: niriComponent
++                    NiriOverview {
++                        screen: overviewWindow.screen
++                        panelWindow: overviewWindow
++                        visible: (overviewWindow.searchingText == "")
++                    }
++                }
++            }
++        }
++    }
+--- a/modules/ii/settings/Dashboard.qml
++++ b/modules/ii/settings/Dashboard.qml
+@@ -8,47 +8,11 @@
+ Scope {
+     id: root
+ 
+-    readonly property bool active: GlobalStates.settingsOpen && Config.options.settings.style === "dashboard"
++    readonly property bool active: GlobalStates.settingsOpen
+ 
+     Loader {
+         active: root.active
+ 
+-        sourceComponent: FloatingWindow {
+-            id: window
+-            title: "Desktop Settings"
+-            color: Appearance.colors.colUiBackground
+-
+-            WindowGlass {
+-                anchors.fill: parent
+-                tint: Appearance.colors.colUiBackground
+-            }
+-
+-            implicitWidth: 1100
+-            implicitHeight: 680
+-            minimumSize: Qt.size(900, 600)
+-
+-            property bool settled: false
+-
+-            visible: true
+-            onVisibleChanged: {
+-                if (!visible) GlobalStates.settingsOpen = false;
+-            }
+-            onWidthChanged: settleTimer.restart()
+-            onHeightChanged: settleTimer.restart()
+-
+-            Timer {
+-                id: settleTimer
+-                interval: 70
+-                running: true
+-                onTriggered: window.settled = true
+-            }
+-
+-            Loader {
+-                anchors.fill: parent
+-                active: window.settled
+-
+-                sourceComponent: DashboardContent {}
+-            }
+-        }
++        source: active ? Qt.resolvedUrl("DashboardWindow.qml") : ""
+     }
+ }
+--- a/modules/ii/settings/DashboardBarWidgets.qml
++++ b/modules/ii/settings/DashboardBarWidgets.qml
+@@ -5,30 +5,20 @@
+     readonly property var multipleAllowed: ["visualizer", "divisor"]
+ 
+     readonly property var all: [
+-        { id: "leftSidebarButton", name: Translation.tr("Left Sidebar Button"), icon: "left_panel_open" },
+         { id: "workspaces", name: Translation.tr("Workspaces"), icon: "steppers" },
+         { id: "weatherBar", name: Translation.tr("Weather"), icon: "flare" },
+-        { id: "liveWallpaper", name: Translation.tr("Live wallpaper"), icon: "play_pause" },
+         { id: "media", name: Translation.tr("Media"), icon: "music_note" },
+         { id: "resources", name: Translation.tr("Resources"), icon: "empty_dashboard" },
+         { id: "systemIcons", name: Translation.tr("System Icons"), icon: "info" },
+         { id: "networkSpeed", name: Translation.tr("Network Speed"), icon: "network_check" },
+         { id: "clockWidget", name: Translation.tr("Clock"), icon: "schedule" },
+-        { id: "utilButtons", name: Translation.tr("Util Buttons"), icon: "toggle_on" },
+         { id: "sysTray", name: Translation.tr("Tray"), icon: "inbox" },
+         { id: "batteryIndicator", name: Translation.tr("Battery"), icon: "battery_android_frame_full" },
+         { id: "bluetooth", name: Translation.tr("Bluetooth"), icon: "bluetooth" },
+         { id: "activeWindow", name: Translation.tr("Active Window"), icon: "subtitles" },
+-        { id: "powerButton", name: Translation.tr("Power Button"), icon: "power_settings_new" },
+-        { id: "updatesCount", name: Translation.tr("Updates"), icon: "deployed_code_update" },
+-        { id: "docktoPanel", name: Translation.tr("Dock to Panel"), icon: "apps" },
+-        { id: "visualizer", name: Translation.tr("Visualizer"), icon: "graphic_eq" },
+         { id: "hyprlandXkbIndicator", name: Translation.tr("Keyboard Layout"), icon: "keyboard" },
+         { id: "divisor", name: Translation.tr("Divider"), icon: "horizontal_distribute" },
+         { id: "launcherButton", name: Translation.tr("Launcher Button"), icon: "search" },
+-        { id: "dynamicIsland", name: Translation.tr("Dynamic Island"), icon: "nest_wifi_pro" },
+-        { id: "aiUsage", name: Translation.tr("AI Usage"), icon: "neurology" },
+-        { id: "avatar", name: Translation.tr("Avatar"), icon: "account_circle" }
+     ]
+ 
+     function byId(id) {
+--- a/modules/ii/settings/DashboardSettingsCatalog.qml
++++ b/modules/ii/settings/DashboardSettingsCatalog.qml
+@@ -210,7 +210,6 @@
+         "services:City name": { type: "text", get: () => Config.options.bar.weather.city, set: v => { Config.options.bar.weather.city = v; } },
+         "general:Icon theme": { type: "select", get: () => Config.options.appearance.icons.theme, set: v => { Config.options.appearance.icons.theme = v; SystemAppearance.applyIconScheme(); }, get options() { return SystemAppearance.toOptions(SystemAppearance.iconThemes); } },
+         "general:Follow icon color scheme": { type: "toggle", get: () => Config.options.appearance.icons.followScheme, set: v => { Config.options.appearance.icons.followScheme = v; SystemAppearance.applyIconScheme(); } },
+-        "general:Dynamic icon accent colors": { type: "toggle", get: () => Config.options.appearance.icons.dynamicColor, set: v => { Config.options.appearance.icons.dynamicColor = v; SystemAppearance.applyIconScheme(); } },
+         "general:Prevent Breeze icon override": { type: "toggle", get: () => Config.options.appearance.icons.preventBreezeOverride, set: v => { Config.options.appearance.icons.preventBreezeOverride = v; SystemAppearance.applyIconScheme(); } },
+         "general:Cursor theme": { type: "select", get: () => SystemAppearance.cursorTheme, set: v => SystemAppearance.setCursor(v, SystemAppearance.cursorSize), get options() { return SystemAppearance.toOptions(SystemAppearance.cursorThemes); } },
+         "general:System font": { type: "select", get: () => SystemAppearance.fontFamily, set: v => SystemAppearance.setFont("ui", v, SystemAppearance.fontSize), get options() { return SystemAppearance.toOptions(SystemAppearance.fonts); } },
+@@ -607,7 +606,6 @@
+             page: Translation.tr("General"), title: Translation.tr("System Appearance"), icon: "palette", cards: [
+                 { type: "combo", key: "general:Icon theme", title: Translation.tr("Icon theme"), icon: "category", kw: "icons" },
+                 { type: "toggle", key: "general:Follow icon color scheme", title: Translation.tr("Follow color scheme"), icon: "brightness_6", kw: "icons light dark scheme" },
+-                { type: "toggle", key: "general:Dynamic icon accent colors", title: Translation.tr("Dynamic accent colors"), icon: "palette", kw: "icons material you recolor" },
+                 { type: "toggle", key: "general:Prevent Breeze icon override", title: Translation.tr("Prevent Breeze override"), icon: "shield", kw: "icons kde breeze kmyc" },
+                 { type: "combo", key: "general:Cursor theme", title: Translation.tr("Cursor theme"), icon: "mouse" },
+                 { type: "combo", key: "general:System font", title: Translation.tr("System font"), icon: "text_fields", kw: "typography" },
+--- a/modules/ii/settings/DashboardStyleCard.qml
++++ b/modules/ii/settings/DashboardStyleCard.qml
+@@ -9,8 +9,6 @@
+     id: root
+ 
+     readonly property var styleOptions: [
+-        { value: "default", name: Translation.tr("Default"), detail: Translation.tr("Full overlay panel"), icon: "settings_panorama", shape: MaterialShape.Shape.Cookie9Sided },
+-        { value: "minimal", name: Translation.tr("Minimal"), detail: Translation.tr("Compact overlay panel"), icon: "settings_heart", shape: MaterialShape.Shape.Clover4Leaf },
+         { value: "dashboard", name: Translation.tr("Dashboard"), detail: Translation.tr("Floating window with cards"), icon: "dashboard", shape: MaterialShape.Shape.SoftBurst }
+     ]
+ 
+--- /dev/null
++++ b/modules/ii/settings/DashboardWindow.qml
+@@ -0,0 +1,54 @@
++import QtQuick
++import QtQuick.Layouts
++import Quickshell
++import qs
++import qs.modules.common
++import qs.modules.common.widgets
++
++FloatingWindow {
++            id: window
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
++            title: "Desktop Settings"
++            color: Appearance.colors.colUiBackground
++
++            WindowGlass {
++                anchors.fill: parent
++                tint: Appearance.colors.colUiBackground
++            }
++
++            implicitWidth: 1100
++            implicitHeight: 680
++            minimumSize: Qt.size(900, 600)
++
++            property bool settled: false
++            property bool riceWasVisible: false
++            property bool riceClosingFromState: false
++            Connections {
++                target: GlobalStates
++                function onSettingsOpenChanged() {
++                    if (!GlobalStates.settingsOpen) window.riceClosingFromState = true;
++                }
++            }
++
++            visible: true
++            onVisibleChanged: {
++                if (visible) riceWasVisible = true;
++                else if (riceWasVisible && !riceClosingFromState) GlobalStates.settingsOpen = false;
++            }
++            onWidthChanged: settleTimer.restart()
++            onHeightChanged: settleTimer.restart()
++
++            Timer {
++                id: settleTimer
++                interval: 70
++                running: true
++                onTriggered: window.settled = true
++            }
++
++            Loader {
++                anchors.fill: parent
++                active: window.settled
++
++                sourceComponent: DashboardContent {}
++            }
++        }
+--- a/modules/ii/settings/Settings.qml
++++ b/modules/ii/settings/Settings.qml
+@@ -26,147 +26,6 @@
+ 
+     Dashboard {}
+ 
+-    PanelWindow {
+-        id: panelWindow
+-        visible: GlobalStates.settingsOpen && Config.options.settings.style !== "dashboard"
+-
+-        function hide() {
+-            GlobalStates.settingsOpen = false;
+-        }
+-
+-        exclusiveZone: 0
+-        WlrLayershell.namespace: "quickshell:settings"
+-        WlrLayershell.layer: WlrLayer.Overlay
+-        WlrLayershell.keyboardFocus: GlobalStates.settingsOpen ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+-        color: "transparent"
+-
+-        anchors {
+-            top: true
+-            bottom: true
+-            left: true
+-            right: true
+-        }
+-
+-        onVisibleChanged: {
+-            if (visible) {
+-                GlobalFocusGrab.addDismissable(panelWindow);
+-                settingsWindow.userMoved = false;
+-            } else {
+-                GlobalFocusGrab.removeDismissable(panelWindow);
+-            }
+-        }
+-
+-        Connections {
+-            target: GlobalFocusGrab
+-            function onDismissed() {
+-                if (panelWindow.visible) panelWindow.hide();
+-            }
+-        }
+-
+-        Rectangle {
+-            anchors.fill: parent
+-            color: "transparent"
+-            opacity: GlobalStates.settingsOpen ? 1 : 0
+-            z: 0
+-            Behavior on opacity {
+-                NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+-            }
+-            MouseArea {
+-                anchors.fill: parent
+-                propagateComposedEvents: false
+-                onClicked: panelWindow.hide()
+-            }
+-        }
+-
+-        Rectangle {
+-            id: settingsWindow
+-            WindowGlass {
+-                anchors.fill: parent
+-                glassEnabled: (parent?.color.a ?? 0) > 0
+-                cardRadius: parent?.radius ?? 0
+-                tint: parent?.color ?? 'transparent'
+-            }
+-            width: Config.options.settings.style === "minimal" ? Math.min(parent.width - 70, 980 * sizeScale) : Math.min(parent.width - 80, 980 * sizeScale)
+-            height: Math.min(parent.height - 80, 665 * sizeScale)
+-            color: Appearance.colors.colUiBackground
+-            border.width: Config.options.settings.borderSize
+-            border.color: CF.ColorUtils.transparentize(Appearance.getColorFromName(Config.options.settings.borderColor), 0.8)
+-            radius: !isMinimal ? Appearance.rounding.screenRounding - Appearance.sizes.hyprlandGapsOut + 5 : Appearance.rounding.screenRounding + 5
+-            z: 1
+-
+-            property bool userMoved: false
+-            anchors.centerIn: userMoved ? undefined : parent
+-
+-            opacity: GlobalStates.settingsOpen ? 1 : 0
+-            scale: GlobalStates.settingsOpen ? 1 : 0.95
+-
+-            Behavior on opacity {
+-                NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+-            }
+-            Behavior on scale {
+-                NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+-            }
+-
+-            Keys.onTabPressed: (event) => {
+-            const count = settingsContent.pages.length;
+-            settingsContent.currentPage = (settingsContent.currentPage + 1) % count;
+-            settingsContent.showingProfile = false;
+-            event.accepted = true;
+-        }
+-
+-        Keys.onBacktabPressed: (event) => {
+-            const count = settingsContent.pages.length;
+-            settingsContent.currentPage = (settingsContent.currentPage - 1 + count) % count;
+-            settingsContent.showingProfile = false;
+-            event.accepted = true;
+-        }
+-
+-        Keys.onPressed: (event) => {
+-            if (event.key === Qt.Key_Escape) {
+-                panelWindow.hide();
+-                event.accepted = true;
+-                return;
+-            }
+-
+-            if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+-                const instance = GlobalStates.currentPageInstance;
+-                if (instance && instance.contentY !== undefined) {
+-                    const step = 60;
+-                    const delta = event.key === Qt.Key_Down ? step : -step;
+-                    const maxY = Math.max(0, (instance.contentHeight ?? 0) - instance.height);
+-                    instance.contentY = Math.max(0, Math.min(maxY, instance.contentY + delta));
+-                }
+-                event.accepted = true;
+-                return;
+-            }
+-        }
+-
+-            Rectangle {
+-                id: dragHandle
+-                anchors.top: parent.top
+-                anchors.left: parent.left
+-                anchors.right: parent.right
+-                height: 32
+-                color: "transparent"
+-                z: 2
+-
+-                MouseArea {
+-                    anchors.fill: parent
+-                    cursorShape: Qt.SizeAllCursor
+-                    drag.target: settingsWindow
+-                    drag.axis: Drag.XAndYAxis
+-                    onPressed: settingsWindow.userMoved = true
+-                    onDoubleClicked: settingsWindow.userMoved = false
+-                }
+-            }
+-
+-            SettingsContent {
+-                id: settingsContent
+-                anchors.fill: parent
+-            }
+-        }
+-    }
+-
+     IpcHandler {
+         target: "settings"
+         function toggle(): void { GlobalStates.settingsOpen = !GlobalStates.settingsOpen; }
+--- a/modules/ii/settings/SettingsContent.qml
++++ b/modules/ii/settings/SettingsContent.qml
+@@ -60,13 +60,7 @@
+ 
+     Component.onCompleted: {
+         Config.readWriteDelay = 0
+-        Qt.callLater(() => {
+-            for (let i = 0; i < root.pages.length; i++) {
+-                let loader = pagesRepeater.itemAt(i)
+-                if (loader) loader.active = true
+-            }
+-            if (profileLoader) profileLoader.active = true
+-        })
++
+     }
+ 
+     ColumnLayout {
+@@ -239,7 +233,7 @@
+                             required property var index
+                             source: modelData.component
+ 
+-                            active: Config.ready && (root.currentPage === index || item !== null)
++                            active: Config.ready && root.currentPage === index && !root.showingProfile
+ 
+                             anchors.fill: parent
+ 
+@@ -274,7 +268,7 @@
+ 
+                     Loader {
+                         id: profileLoader
+-                        active: false
++                        active: root.showingProfile
+                         anchors.fill: parent
+                         source: Qt.resolvedUrl("pages/Profile.qml")
+ 
+--- a/modules/ii/settings/pages/BarConfig.qml
++++ b/modules/ii/settings/pages/BarConfig.qml
+@@ -17,30 +17,20 @@
+     }
+ 
+     property var allWidgets: [
+-        { id: "leftSidebarButton", name: Translation.tr("Left Sidebar Button"),  icon: "left_panel_open" },
+         { id: "workspaces",        name: Translation.tr("Workspaces"),           icon: "steppers" },
+         { id: "weatherBar",        name: Translation.tr("Weather"),              icon: "flare" },
+-        { id: "liveWallpaper",     name: Translation.tr("Live wallpaper"),        icon: "play_pause" },
+         { id: "media",             name: Translation.tr("Media"),                icon: "music_note" },
+         { id: "resources",         name: Translation.tr("Resources"),            icon: "empty_dashboard" },
+         { id: "systemIcons",       name: Translation.tr("System Icons"),         icon: "info" },
+         { id: "networkSpeed",      name: Translation.tr("Network Speed"),        icon: "network_check" },
+         { id: "clockWidget",       name: Translation.tr("Clock"),                icon: "schedule" },
+-        { id: "utilButtons",       name: Translation.tr("Util Buttons"),         icon: "toggle_on" },
+         { id: "sysTray",           name: Translation.tr("Tray"),                 icon: "inbox" },
+         { id: "batteryIndicator",  name: Translation.tr("Battery"),              icon: "battery_android_frame_full" },
+         { id: "bluetooth",         name: Translation.tr("Bluetooth"),            icon: "bluetooth" },
+         { id: "activeWindow",      name: Translation.tr("Active Window"),        icon: "subtitles" },
+-        { id: "powerButton",       name: Translation.tr("Power Button"),         icon: "power_settings_new" },
+-        { id: "updatesCount",      name: Translation.tr("Updates"),              icon: "deployed_code_update" },
+-        { id: "docktoPanel",       name: Translation.tr("Dock to Panel"),        icon: "apps" },
+-        { id: "visualizer",        name: Translation.tr("Visualizer"),           icon: "graphic_eq" },
+         { id: "hyprlandXkbIndicator",   name: Translation.tr("Keyboard Layout"), icon: "keyboard" },
+         { id: "divisor",            name: Translation.tr("Divider"),             icon: "horizontal_distribute" },
+         { id: "launcherButton",     name: Translation.tr("Launcher Button"),     icon: "search" },
+-        { id: "dynamicIsland",     name: Translation.tr("Dynamic Island"),     icon: "nest_wifi_pro" },
+-        { id: "aiUsage",           name: Translation.tr("AI Usage"),           icon: "neurology" },
+-        { id: "avatar",            name: Translation.tr("Avatar"),             icon: "account_circle" },
+     ]
+ 
+     function availableFor(section) {
+--- a/modules/ii/settings/pages/HyprlandConfig.qml
++++ b/modules/ii/settings/pages/HyprlandConfig.qml
+@@ -1164,7 +1164,6 @@
+                     onSelected: newValue => {
+                         Config.options.hyprland.animations.animation = newValue
+                         saveAnimProc.command = [
+-                            "python3",
+                             HyprlandConfig.configuratorScriptPath,
+                             "--anim-preset", newValue
+                         ]
+--- a/modules/ii/settings/pages/InterfaceConfig.qml
++++ b/modules/ii/settings/pages/InterfaceConfig.qml
+@@ -87,8 +87,6 @@
+                     currentValue: Config.options.settings.style
+                     onSelected: newValue => { Config.options.settings.style = newValue }
+                     options: [
+-                        { displayName: Translation.tr("Default"), icon: "settings_panorama", value: "default" },
+-                        { displayName: Translation.tr("Minimal"), icon: "settings_heart", value: "minimal" },
+                         { displayName: Translation.tr("Dashboard"), icon: "dashboard", value: "dashboard" }
+                     ]
+                 }
+--- a/modules/ii/sidebarRight/SidebarRight.qml
++++ b/modules/ii/sidebarRight/SidebarRight.qml
+@@ -17,6 +17,7 @@
+ 
+     PanelWindow {
+         id: panelWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
+ 
+         readonly property bool animatedEntrance: WM.compositor !== "hyprland"
+         property bool reallyVisible: false
+@@ -161,7 +162,7 @@
+ 
+                 Loader {
+                     id: sidebarContentLoader
+-                    active: panelWindow.reallyVisible || Config?.options.sidebar.keepRightSidebarLoaded
++                    active: panelWindow.reallyVisible
+                     anchors {
+                         fill: parent
+                         margins: Appearance.sizes.hyprlandGapsOut
+@@ -177,7 +178,7 @@
+                         }
+                     }
+ 
+-                    sourceComponent: SidebarRightContent {}
++                    source: active ? Qt.resolvedUrl("SidebarRightContent.qml") : ""
+                 }
+             }
+         }
+--- a/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml
++++ b/modules/ii/wallpaperSelector/WallpaperDirectoryItem.qml
+@@ -77,7 +77,7 @@
+                     ThumbnailImage {
+                         id: thumbnailImage
+                         anchors.fill: parent
+-                        generateThumbnail: false
++                        generateThumbnail: true
+                         sourcePath: (fileModelData && fileModelData.filePath) ? fileModelData.filePath : ""
+                         cache: false
+                         fillMode: Image.PreserveAspectCrop
+--- a/modules/ii/wallpaperSelector/WallpaperSelector.qml
++++ b/modules/ii/wallpaperSelector/WallpaperSelector.qml
+@@ -37,85 +37,7 @@
+         id: wallpaperSelectorLoader
+         active: root.reallyOpen
+ 
+-        sourceComponent: PanelWindow {
+-            id: panelWindow
+-            readonly property var monitor: WM.monitorFor(panelWindow.screen)
+-            property bool monitorIsFocused: WM.compositor === "hyprland"
+-                ? (Hyprland.focusedMonitor?.name == monitor?.name)
+-                : (WM.focusedMonitor?.name == monitor?.name)
+-
+-            exclusionMode: ExclusionMode.Ignore
+-            WlrLayershell.namespace: "quickshell:wallpaperSelector"
+-            WlrLayershell.layer: WlrLayer.Overlay
+-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+-            color: "transparent"
+-
+-            anchors.top: true
+-            margins {
+-                top: Config?.options.bar.vertical ? Appearance.sizes.hyprlandGapsOut : Appearance.sizes.barHeight + Appearance.sizes.hyprlandGapsOut
+-            }
+-
+-            mask: Region {
+-                item: content
+-            }
+-
+-            implicitHeight: Appearance.sizes.wallpaperSelectorHeight
+-            implicitWidth: Appearance.sizes.wallpaperSelectorWidth
+-
+-            Component.onCompleted: {
+-                GlobalFocusGrab.addDismissable(panelWindow);
+-                content.slideIn();
+-            }
+-            Component.onDestruction: {
+-                GlobalFocusGrab.removeDismissable(panelWindow);
+-            }
+-            Connections {
+-                target: GlobalFocusGrab
+-                function onDismissed() {
+-                    GlobalStates.wallpaperSelectorOpen = false;
+-                }
+-            }
+-
+-            WallpaperSelectorContent {
+-                id: content
+-                width: parent.width
+-                height: parent.height
+-                x: 0
+-                y: 0
+-
+-                function slideIn() {
+-                    content.y = -content.height;
+-                    if (WM.compositor === "niri") {
+-                        Qt.callLater(() => { Qt.callLater(() => { content.y = 0; }); });
+-                    } else {
+-                        Qt.callLater(() => { content.y = 0; });
+-                    }
+-                }
+-
+-                Connections {
+-                    target: GlobalStates
+-                    function onWallpaperSelectorOpenChanged() {
+-                        if (!GlobalStates.wallpaperSelectorOpen) {
+-                            content.y = -content.height;
+-                        }
+-                    }
+-                }
+-
+-                Behavior on y {
+-                    NumberAnimation {
+-                        duration: WM.compositor === "niri"
+-                            ? Appearance.animation.sidebarSlideEnter.duration
+-                            : Appearance.animation.sidebarSlideExit.duration
+-                        easing.type: GlobalStates.wallpaperSelectorOpen
+-                            ? Appearance.animation.sidebarSlideEnter.type
+-                            : Appearance.animation.sidebarSlideExit.type
+-                        easing.bezierCurve: GlobalStates.wallpaperSelectorOpen
+-                            ? Appearance.animation.sidebarSlideEnter.bezierCurve
+-                            : Appearance.animation.sidebarSlideExit.bezierCurve
+-                    }
+-                }
+-            }
+-        }
++        source: active ? Qt.resolvedUrl("WallpaperSelectorWindow.qml") : ""
+     }
+ 
+     function toggleWallpaperSelector() {
+--- a/modules/ii/wallpaperSelector/WallpaperSelectorContent.qml
++++ b/modules/ii/wallpaperSelector/WallpaperSelectorContent.qml
+@@ -12,6 +12,8 @@
+ 
+ MouseArea {
+     id: root
++    property bool riceDirectoryReady: false
++    Component.onCompleted: root.updateThumbnails()
+     property int columns: Config.options.wallpaperSelector.columns || 4
+     property real previewCellAspectRatio: 4 / 3
+     property bool useDarkMode: Appearance.m3colors.darkmode
+@@ -25,7 +27,7 @@
+ 
+     property var quickDirs: [
+         { icon: "home",       name: "Home   ",       path: `${Directories.home}`,                alwaysVisible: Config.options.wallpaperSelector.showHomePath },
+-        { icon: "wallpaper",  name: "Wallpapers   ", path: `${Directories.pictures}/Wallpapers`, alwaysVisible: true },
++        { icon: "wallpaper",  name: "Wallpapers   ", path: `${Directories.pictures}/wallpapers`, alwaysVisible: true },
+         { icon: "imagesmode", name: "Homework   ",   path: `${Directories.pictures}/homework`,   alwaysVisible: Config.options.policies.weeb },
+         { icon: "casino",     name: "Random   ",     path: `${Directories.pictures}/Random`,     alwaysVisible: true },
+         { 
+@@ -57,8 +59,11 @@
+         const cellW = item?.cellWidth ?? (wallpaperGridBackground.width / root.columns);
+         const cellH = item?.cellHeight ?? (cellW / root.previewCellAspectRatio);
+         const thumbnailSizeName = Images.thumbnailSizeNameForDimensions(cellW - totalImageMargin, cellH - totalImageMargin);
+-        Wallpapers.setDirectory(`${Directories.pictures}/Wallpapers`);
+-        Qt.callLater(() => Wallpapers.generateThumbnail(thumbnailSizeName));
++        if (!root.riceDirectoryReady) {
++            root.riceDirectoryReady = true;
++            Wallpapers.setDirectory(Config.options.wallpaperSelector.userPath || `${Directories.pictures}/wallpapers`);
++        }
++        // Lite: generate only thumbnails requested by visible delegates.
+     }
+ 
+     function handleFilePasting(event) {
+--- /dev/null
++++ b/modules/ii/wallpaperSelector/WallpaperSelectorWindow.qml
+@@ -0,0 +1,92 @@
++import qs
++import qs.services
++import qs.modules.common
++import qs.modules.common.widgets
++import qs.modules.common.functions
++import QtQuick
++import QtQuick.Controls
++import Quickshell
++import Quickshell.Io
++import Quickshell.Wayland
++import Quickshell.Hyprland
++
++PanelWindow {
++            id: panelWindow
++            screen: Quickshell.screens.find(s => s.name === Quickshell.env("RICE_TEST_OUTPUT")) || Quickshell.screens[0]
++            readonly property var monitor: WM.monitorFor(panelWindow.screen)
++            property bool monitorIsFocused: WM.compositor === "hyprland"
++                ? (Hyprland.focusedMonitor?.name == monitor?.name)
++                : (WM.focusedMonitor?.name == monitor?.name)
++
++            exclusionMode: ExclusionMode.Ignore
++            WlrLayershell.namespace: "quickshell:wallpaperSelector"
++            WlrLayershell.layer: WlrLayer.Overlay
++            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
++            color: "transparent"
++
++            anchors.top: true
++            margins {
++                top: Config?.options.bar.vertical ? Appearance.sizes.hyprlandGapsOut : Appearance.sizes.barHeight + Appearance.sizes.hyprlandGapsOut
++            }
++
++            mask: Region {
++                item: content
++            }
++
++            implicitHeight: Appearance.sizes.wallpaperSelectorHeight
++            implicitWidth: Appearance.sizes.wallpaperSelectorWidth
++
++            Component.onCompleted: {
++                GlobalFocusGrab.addDismissable(panelWindow);
++                content.slideIn();
++            }
++            Component.onDestruction: {
++                GlobalFocusGrab.removeDismissable(panelWindow);
++            }
++            Connections {
++                target: GlobalFocusGrab
++                function onDismissed() {
++                    GlobalStates.wallpaperSelectorOpen = false;
++                }
++            }
++
++            WallpaperSelectorContent {
++                id: content
++                width: parent.width
++                height: parent.height
++                x: 0
++                y: 0
++
++                function slideIn() {
++                    content.y = -content.height;
++                    if (WM.compositor === "niri") {
++                        Qt.callLater(() => { Qt.callLater(() => { content.y = 0; }); });
++                    } else {
++                        Qt.callLater(() => { content.y = 0; });
++                    }
++                }
++
++                Connections {
++                    target: GlobalStates
++                    function onWallpaperSelectorOpenChanged() {
++                        if (!GlobalStates.wallpaperSelectorOpen) {
++                            content.y = -content.height;
++                        }
++                    }
++                }
++
++                Behavior on y {
++                    NumberAnimation {
++                        duration: WM.compositor === "niri"
++                            ? Appearance.animation.sidebarSlideEnter.duration
++                            : Appearance.animation.sidebarSlideExit.duration
++                        easing.type: GlobalStates.wallpaperSelectorOpen
++                            ? Appearance.animation.sidebarSlideEnter.type
++                            : Appearance.animation.sidebarSlideExit.type
++                        easing.bezierCurve: GlobalStates.wallpaperSelectorOpen
++                            ? Appearance.animation.sidebarSlideEnter.bezierCurve
++                            : Appearance.animation.sidebarSlideExit.bezierCurve
++                    }
++                }
++            }
++        }
+--- a/panelFamilies/IllogicalImpulseFamily.qml
++++ b/panelFamilies/IllogicalImpulseFamily.qml
+@@ -5,53 +5,16 @@
+ import qs.modules.common
+ import qs.modules.ii.background
+ import qs.modules.ii.bar
+-import qs.modules.ii.dock
+-import qs.modules.ii.equalizer
+-import qs.modules.ii.lock
+-import qs.modules.ii.mediaControls
+ import qs.modules.ii.notificationPopup
+ import qs.modules.ii.onScreenDisplay
+-import qs.modules.ii.onScreenKeyboard
+-import qs.modules.ii.overview
+-import qs.modules.ii.polkit
+-import qs.modules.ii.settings
+-import qs.modules.ii.regionSelector
+-import qs.modules.ii.screenCorners
+-import qs.modules.ii.screenTranslator
+-import qs.modules.ii.sessionScreen
+-import qs.modules.ii.sidebarLeft
+-import qs.modules.ii.sidebarRight
+-import qs.modules.ii.overlay
+ import qs.modules.ii.verticalBar
+-import qs.modules.ii.wallpaperSelector
+-import qs.modules.ii.desktopMenu
+-import qs.modules.ii.dropover
+-import qs.modules.ii.frame
+ 
+ Scope {
+     PanelLoader { extraCondition: !Config.options.bar.vertical; component: Bar {} }
+     PanelLoader { component: Background {} }
+-    PanelLoader { extraCondition: Config.options.dock.enable; component: Dock {} }
+-    PanelLoader { component: EqualizerPopup {} }
+     // hyprlock remains the session lock.
+-    PanelLoader { component: MediaControls {} }
+     PanelLoader { component: NotificationPopup {} }
+     PanelLoader { component: OnScreenDisplay {} }
+-    PanelLoader { component: OnScreenKeyboard {} }
+-    PanelLoader { component: Overlay {} }
+-    PanelLoader { component: Overview {} }
+     // Keep the existing session polkit agent.
+-    PanelLoader { component: RegionSelector {} }
+-    PanelLoader { component: ScreenCorners {} }
+-    PanelLoader { component: ScreenTranslator {} }
+-    PanelLoader { component: SessionScreen {} }
+-    PanelLoader { component: SidebarLeft {} }
+-    PanelLoader { component: SidebarRight {} }
+     PanelLoader { extraCondition: Config.options.bar.vertical; component: VerticalBar {} }
+-    PanelLoader { component: WallpaperSelector {} }
+-    PanelLoader { component: Settings {} }
+-    PanelLoader { component: DesktopMenu {} }
+-    PanelLoader { extraCondition: GlobalStates.dropShelfOpen; component: DropShelfPanel {} }
+-    PanelLoader { component: NiriBackdrop {} }
+-    PanelLoader { component: ScreenFrame {} }
+ }
+--- a/services/ColorSchemes.qml
++++ b/services/ColorSchemes.qml
+@@ -137,7 +137,7 @@
+     Process {
+         id: listProc
+         command: ["python3", root.scriptPath, "--list"]
+-        running: true
++        running: false
+         stdout: StdioCollector {
+             onStreamFinished: {
+                 try {
+--- a/services/CompositorGlobalShortcut.qml
++++ b/services/CompositorGlobalShortcut.qml
+@@ -1,4 +1,5 @@
+ import QtQuick
++import Quickshell
+ import Quickshell.Hyprland
+ import qs.services
+ 
+@@ -10,7 +11,7 @@
+     signal pressed()
+     signal released()
+ 
+-    active: WM.compositor === "hyprland"
++    active: WM.compositor === "hyprland" && Quickshell.env("RICE_TOOL_HOST") !== "1"
+ 
+     sourceComponent: GlobalShortcut {
+         name: root.name
+--- a/services/DesktopWidgets.qml
++++ b/services/DesktopWidgets.qml
+@@ -11,18 +11,10 @@
+         { key: "clock",       icon: "schedule",          name: Translation.tr("Clock") },
+         { key: "weather",     icon: "partly_cloudy_day", name: Translation.tr("Weather") },
+         { key: "calendar",    icon: "calendar_month",    name: Translation.tr("Calendar") },
+-        { key: "worldClock",  icon: "public",            name: Translation.tr("World Clock") },
+         { key: "media",       icon: "music_note",        name: Translation.tr("Media") },
+-        { key: "visualizer",  icon: "graphic_eq",        name: Translation.tr("Visualizer") },
+         { key: "resources",   icon: "monitor_heart",     name: Translation.tr("Resources") },
+         { key: "userCard",    icon: "person",            name: Translation.tr("User Card") },
+         { key: "todo",        icon: "add_task",          name: Translation.tr("To-Do") },
+-        { key: "notes",       icon: "note_stack_add",    name: Translation.tr("Notes") },
+-        { key: "timers",      icon: "timer",             name: Translation.tr("Timers") },
+-        { key: "images",      icon: "photo_library",     name: Translation.tr("Image Converter") },
+-        { key: "customImage", icon: "image",             name: Translation.tr("Custom Image") },
+-        { key: "imageCard",   icon: "photo_size_select_large", name: Translation.tr("Image Card") },
+-        { key: "sticker",     icon: "sticker",           name: Translation.tr("Sticker") }
+     ]
+ 
+     readonly property var hidden: Array.from(Config.options.background.widgets.menuHidden)
+--- a/services/LyricsService.qml
++++ b/services/LyricsService.qml
+@@ -138,25 +138,12 @@
+     }
+ 
+     function restartLyrics() {
+-        lyricsProc.running = false
+-        boundaryTimer.stop()
+-        root.lyricsLines = []
+-        root.activeIndex = -1
+-        root.slots = ["", "", "", "", "", "", ""]
+-        root.status = "loading"
+-
+-        const title    = root.activePlayer?.trackTitle  ?? ""
+-        const artist   = root.activePlayer?.trackArtist ?? ""
+-        const duration = root.activePlayer?.length       ?? 0
+-
+-        if (!title || !artist) { root.status = "no_info"; return }
+-
+-        lyricsProc.command = [
+-            "python3",
+-            `${Directories.scriptPath}/lyrics/lyrics.py`,
+-            title, artist, String(Math.floor(duration))
+-        ]
+-        lyricsProc.running = true
++        lyricsProc.running = false;
++        boundaryTimer.stop();
++        root.lyricsLines = [];
++        root.activeIndex = -1;
++        root.slots = ["", "", "", "", "", "", ""];
++        root.status = "no_info";
+     }
+ 
+     Timer {
+@@ -174,5 +161,5 @@
+         function onPlaybackStateChanged() { root.resync() }
+     }
+ 
+-    Component.onCompleted: root.restartLyrics()
++    // Lite: lyrics fetching is disabled.
+ }
+\ No newline at end of file
+--- a/services/Network.qml
++++ b/services/Network.qml
+@@ -170,7 +170,7 @@
+     Process {
+         id: subscriber
+         running: true
+-        command: ["nmcli", "monitor"]
++        command: [Quickshell.shellPath("integration/rice-core"), "parent-exec", String(Quickshell.processId), "nmcli", "monitor"]
+         stdout: SplitParser {
+             onRead: root.update()
+         }
+--- a/services/Notifications.qml
++++ b/services/Notifications.qml
+@@ -16,6 +16,12 @@
+  */
+ Singleton {
+ 	id: root
++    readonly property bool toolHost: Quickshell.env("RICE_TOOL_HOST") === "1"
++    property bool syncingToolState: false
++    function forward(action, data) {
++        Quickshell.execDetached(["qs", "ipc", "-p", Quickshell.env("RICE_TOOL_MAIN"), "call", "toolNotifications", "command", action, JSON.stringify(data)]);
++    }
++
+     component Notif: QtObject {
+         id: wrapper
+         required property int notificationId // Could just be `id` but it conflicts with the default prop in QtObject
+@@ -78,8 +84,9 @@
+         }
+     }
+ 
+-    property bool silent: false
+-    property int unread: 0
++    property bool silent: toolHost ? Quickshell.env("RICE_TOOL_SILENT") === "1" : false
++    onSilentChanged: if (toolHost && !syncingToolState) forward("silent", silent)
++    property int unread: toolHost ? Number(Quickshell.env("RICE_TOOL_UNREAD") || "0") : 0
+     property var filePath: Directories.notificationsPath
+     property list<Notif> list: []
+     property var popupList: list.filter((notif) => notif.popup);
+@@ -152,8 +159,9 @@
+     signal discardAll();
+     signal timeout(id: var);
+ 
+-	NotificationServer {
+-        id: notifServer
++	property var notifServer: serverLoader.item
++    Loader { id: serverLoader; active: !root.toolHost; sourceComponent: NotificationServer {
++        id: nativeNotifServer
+         // actionIconsSupported: true
+         actionsSupported: true
+         bodyHyperlinksSupported: true
+@@ -189,8 +197,10 @@
+             notifFileView.setText(stringifyList(root.list));
+         }
+     }
++    }
+ 
+     function markAllRead() {
++        if (root.toolHost) { root.unread = 0; forward("read", null); return; }
+         root.unread = 0;
+     }
+ 
+@@ -199,6 +209,7 @@
+     }
+ 
+     function discardNotifications(ids) {
++        if (root.toolHost) { forward("discard", ids); return; }
+         console.log("[Notifications] Discarding notifications with IDs: " + ids.join(", "));
+         const idSet = new Set(ids);
+         // Assign a new array instead of splicing: on a list<> property, splice()
+@@ -216,6 +227,7 @@
+     }
+ 
+     function discardAllNotifications() {
++        if (root.toolHost) { forward("discardAll", null); return; }
+         root.list = []
+         triggerListChange()
+         notifFileView.setText(stringifyList(root.list));
+@@ -226,12 +238,14 @@
+     }
+ 
+     function cancelTimeout(id) {
++        if (root.toolHost) { forward("cancelTimeout", id); return; }
+         const index = root.list.findIndex((notif) => notif.notificationId === id);
+         if (root.list[index] != null && root.list[index].timer != null)
+             root.list[index].timer.stop();
+     }
+ 
+     function timeoutNotification(id) {
++        if (root.toolHost) { forward("timeout", id); return; }
+         const index = root.list.findIndex((notif) => notif.notificationId === id);
+         if (root.list[index] != null)
+             root.list[index].popup = false;
+@@ -239,6 +253,7 @@
+     }
+ 
+     function timeoutAll() {
++        if (root.toolHost) { forward("timeoutAll", null); return; }
+         root.popupList.forEach((notif) => {
+             root.timeout(notif.notificationId);
+         })
+@@ -248,6 +263,7 @@
+     }
+ 
+     function attemptInvokeAction(id, notifIdentifier) {
++        if (root.toolHost) { forward("invoke", {id:id,action:notifIdentifier}); return; }
+         console.log("[Notifications] Attempting to invoke action with identifier: " + notifIdentifier + " for notification ID: " + id);
+         const notifServerIndex = notifServer.trackedNotifications.values.findIndex((notif) => notif.id + root.idOffset === id);
+         console.log("Notification server index: " + notifServerIndex);
+@@ -281,6 +297,8 @@
+ 
+     FileView {
+         id: notifFileView
++        watchChanges: root.toolHost
++        onFileChanged: if (root.toolHost) reload()
+         path: Qt.resolvedUrl(filePath)
+         onLoaded: {
+             try {
+@@ -288,7 +306,7 @@
+                 root.list = JSON.parse(fileContents).map((notif) => {
+                     return notifComponent.createObject(root, {
+                         "notificationId": notif.notificationId,
+-                        "actions": [], // Notification actions are meaningless if they're not tracked by the server or the sender is dead
++                        "actions": root.toolHost ? (notif.actions || []) : [], // The main process owns action handles.
+                         "appIcon": notif.appIcon,
+                         "appName": notif.appName,
+                         "body": notif.body,
+--- a/services/ResourceUsage.qml
++++ b/services/ResourceUsage.qml
+@@ -175,7 +175,7 @@
+             }
+ 
+             root.updateHistories()
+-            interval = Config.options?.resources?.updateInterval ?? 3000
++            interval = Math.max(2000, Config.options?.resources?.updateInterval ?? 3000)
+         }
+     }
+ 
+--- a/services/SettingsQuickControls.qml
++++ b/services/SettingsQuickControls.qml
+@@ -506,7 +506,7 @@
+             () => root.hypr.animations.animation,
+             value => {
+                 root.hypr.animations.animation = value;
+-                Quickshell.execDetached(["python3", HyprlandConfig.configuratorScriptPath, "--anim-preset", value]);
++                Quickshell.execDetached([HyprlandConfig.configuratorScriptPath, "--anim-preset", value]);
+             },
+             [
+                 { displayName: Translation.tr("Elastic"),   icon: "move_selection_right", value: "fast"   },
+--- a/services/Todo.qml
++++ b/services/Todo.qml
+@@ -5,13 +5,22 @@
+ Singleton {
+     id: root
+     property var list: []
+-    property var deleted: null
++    property var deleted: toolHost && Quickshell.env("RICE_TOOL_UNDO") === "1" ? ({available:true}) : null
+     property string error: ""
+-    property bool busy: false
++    readonly property bool toolHost: Quickshell.env("RICE_TOOL_HOST") === "1"
++    property bool requestBusy: false
++    property bool parentBusy: false
++    readonly property bool busy: requestBusy || (toolHost && parentBusy)
+     property string pending: ""
+     function transact(action, payload) {
+         if (busy) return false;
+-        busy = true;
++        if (root.toolHost && action !== "list") {
++            root.requestBusy = true;
++            proxy.command = ["qs", "ipc", "-p", Quickshell.env("RICE_TOOL_MAIN"), "call", "desktop", "task", action, payload];
++            proxy.running = true;
++            return true;
++        }
++        requestBusy = true;
+         pending = action;
+         worker.responseReady = false;
+         worker.exited = false;
+@@ -26,7 +35,7 @@
+     function markUnfinished(index) { if (list[index] && list[index].done) return run("toggle", {id: list[index].id}); return false; }
+     function deleteItem(index) { return list[index] ? run("delete", {id: list[index].id}) : false; }
+     function edit(id, text) { return run("edit", {id: id, text: text}); }
+-    function undo() { return deleted ? run("restore", deleted) : false; }
++    function undo() { if (root.toolHost) return run("undo", {}); return deleted ? run("restore", deleted) : false; }
+     function refresh() { return run("list", {}); }
+     Component.onCompleted: refresh()
+     function finish() {
+@@ -40,7 +49,7 @@
+             if (root.pending === "delete") root.deleted = result.deleted;
+             if (root.pending === "restore") root.deleted = null;
+         }
+-        root.busy = false;
++        root.requestBusy = false;
+     }
+     Process {
+         id: worker
+@@ -56,4 +65,33 @@
+         }
+         onExited: (code, status) => { worker.exited = true; root.finish(); }
+     }
++
++    Process {
++        id: proxy
++        stdout: StdioCollector { id: proxyResult }
++        onExited: (code, status) => {
++            root.requestBusy = false;
++            if (code !== 0 || proxyResult.text.trim() !== "true") root.error = "Task backend is busy; try again.";
++            else taskReload.restart();
++        }
++    }
++    FileView {
++        id: taskFile
++        path: (Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME") + "/.local/share") + "/hyprland-rice/tasks.json"
++        watchChanges: true
++        printErrors: false
++        onFileChanged: { reload(); taskReload.restart(); }
++    }
++    Timer {
++        id: taskReload
++        interval: 80
++        onTriggered: {
++            if (root.busy) { restart(); return; }
++            try {
++                const clean = rows => rows.map(t => ({id:t.id,text:t.text,done:t.done,created:t.created}));
++                if (!root.error && JSON.stringify(clean(JSON.parse(taskFile.text()).tasks)) === JSON.stringify(clean(root.list))) return;
++            } catch (error) {}
++            root.refresh();
++        }
++    }
+ }
+--- a/services/Wallpapers.qml
++++ b/services/Wallpapers.qml
+@@ -41,6 +41,7 @@
+     property string previewPath: ""  // Set during arrow navigation; empty by default
+     property string confirmedPath: ""  // Holds confirmed path until config catches up
+ 
++    Connections { target: Config.options.background; function onWallpaperPathChanged() { root.confirmedPath = ""; } }
+     signal changed()
+     signal thumbnailGenerated(directory: string)
+     signal thumbnailGeneratedFile(filePath: string)
+@@ -138,14 +139,14 @@
+             if (/^\/*$/.test(validateDirProc.nicePath)) validateDirProc.nicePath = "/";
+             validateDirProc.exec([
+                 "bash", "-c",
+-                `if [ -d "${validateDirProc.nicePath}" ]; then echo dir; elif [ -f "${validateDirProc.nicePath}" ]; then echo file; else echo invalid; fi`
++                'if [ -d "$1" ]; then echo dir; elif [ -f "$1" ]; then echo file; else echo invalid; fi', "_", validateDirProc.nicePath
+             ])
+         }
+         stdout: StdioCollector {
+             onStreamFinished: {
+-                    root.directory = Qt.resolvedUrl(validateDirProc.nicePath)
+                 const result = text.trim()
+                 if (result === "dir") {
++                    root.directory = Qt.resolvedUrl(validateDirProc.nicePath)
+                 } else if (result === "file") {
+                     root.directory = Qt.resolvedUrl(FileUtils.parentDirectory(validateDirProc.nicePath))
+                 } else {
+--- a/shell.qml
++++ b/shell.qml
+@@ -47,10 +47,10 @@
+         Hyprsunset.load()
+ // First-run wallpaper replacement is managed by the integration.
+ // Profile switching manages competing processes.
+-        Cliphist.refresh()
++        // Lite: initialize this service only when requested.
+         Wallpapers.load()
+-        Football.load()
+-        Updates.load()
++        // Lite: initialize this service only when requested.
++        // Lite: initialize this service only when requested.
+ // Lyrics are opt-in.
+     }
+     

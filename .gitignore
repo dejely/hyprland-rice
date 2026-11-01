@@ -6,3 +6,5 @@ tasks.json
 screenshots/
 wallpapers/
 backups/
+
+/rice-core/target/

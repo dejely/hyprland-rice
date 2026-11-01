@@ -1,0 +1,65 @@
+"""Exercise native CLI contracts against isolated persistent files."""
+import concurrent.futures, json, os, subprocess, tempfile, unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+BIN=ROOT/'rice-core/target/release/rice-core'
+class NativeCore(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.env=dict(os.environ,XDG_DATA_HOME=str(self.root/'data'),XDG_STATE_HOME=str(self.root/'state'),XDG_CONFIG_HOME=str(self.root/'config'),XDG_CACHE_HOME=str(self.root/'cache'))
+ def tearDown(self):self.tmp.cleanup()
+ def call(self,*args,ok=True):
+  r=subprocess.run([str(BIN),*args],env=self.env,capture_output=True,text=True)
+  if ok:self.assertEqual(r.returncode,0,r.stderr+r.stdout)
+  else:self.assertNotEqual(r.returncode,0)
+  return r
+ def task(self,action,payload=None,ok=True):return json.loads(self.call('tasks',action,json.dumps(payload or {}),ok=ok).stdout)
+ def test_task_lifecycle_and_undo(self):
+  t=self.task('add',{'text':' banana '})['tasks'][0];self.assertEqual(t['text'],'banana')
+  self.assertEqual(self.task('edit',{'id':t['id'],'text':'changed'})['tasks'][0]['id'],t['id'])
+  self.assertTrue(self.task('toggle',{'id':t['id']})['tasks'][0]['done'])
+  deleted=self.task('delete',{'id':t['id']})['deleted'];restored=self.task('restore',deleted)['tasks'][0];self.assertEqual(restored['id'],t['id']);self.assertTrue(restored['done'])
+  self.assertEqual(self.task('list')['tasks'],[restored])
+ def test_concurrent_saves(self):
+  with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:list(pool.map(lambda i:self.task('add',{'text':str(i)}),range(40)))
+  ts=self.task('list')['tasks'];self.assertEqual(len(ts),40);self.assertEqual(len({t['id'] for t in ts}),40)
+ def test_corruption_is_preserved(self):
+  self.task('add',{'text':'keep'});p=self.root/'data/hyprland-rice/tasks.json';p.write_text('{invalid');self.task('add',{'text':'bad'},ok=False);self.assertEqual(p.read_text(),'{invalid')
+ def test_reject_duplicate_restore_and_empty_edit(self):
+  t=self.task('add',{'text':'keep'})['tasks'][0];self.task('restore',{'task':t},ok=False);self.task('edit',{'id':t['id'],'text':' '},ok=False);self.assertEqual(self.task('list')['tasks'][0]['text'],'keep')
+ def test_palette_retains_last_valid(self):
+  src=self.root/'palette.json';dest=self.root/'colors.json';src.write_text(json.dumps(dict(windowBackground='#10151c',primaryText='#eeeeee',secondaryText='#aaaaaa',accentPrimary='##aabbcc')));self.call('palette',str(src),str(dest));before=dest.read_bytes();src.write_text('{}');self.call('palette',str(src),str(dest),ok=False);self.assertEqual(dest.read_bytes(),before)
+ def test_idle_preserves_lock_and_unrelated_listeners(self):
+  p=self.root/'idle.conf';p.write_text('general {\n lock_cmd = custom-lock\n}\nlistener {\n timeout = 10\n on-timeout = custom-action\n}\nlistener {\n timeout = 30\n on-timeout = loginctl lock-session\n}\n');self.call('idle-config','--file',str(p),'--lock','60');s=p.read_text();self.assertIn('custom-lock',s);self.assertIn('custom-action',s);self.assertIn('timeout = 60',s);self.assertNotIn('timeout = 30',s)
+ def test_monitor_validation(self):
+  p=self.root/'monitors.conf';self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','scale','1.25');self.assertIn('1.25',p.read_text());before=p.read_bytes();self.call('monitor-config','--file',str(p),'--output','eDP-1','--set','mode','bad\nvalue',ok=False);self.assertEqual(p.read_bytes(),before)
+ def test_static_icon_variant_resolution(self):
+  root=self.root/'data/icons/banana-test-dark';root.mkdir(parents=True);(root/'index.theme').write_text('[Icon Theme]\nName=Fixture\n')
+  resolved=json.loads(self.call('icon-theme','resolve','--theme','banana-test','--mode','dark','--dynamic').stdout)
+  self.assertTrue(resolved['ok']);self.assertEqual(resolved['out'],'banana-test-dark');self.assertFalse(resolved['dynamic']);self.assertEqual(resolved['capability'],'none')
+ def test_thumbnail_generation_and_cache_limits(self):
+  import shutil
+  native=self.root/'native';native.mkdir();shutil.copy2(ROOT/'integration/thumbnail.sh',native/'thumbnail.sh');shutil.copy2(BIN,native/'rice-core')
+  source=self.root/"banana ' wallpaper.png";subprocess.run(['magick','-size','64x64','xc:red',str(source)],check=True)
+  cache=self.root/'cache/hyprland-rice/end4/thumbnails';thumb=cache/'normal'/('a'*32+'.png')
+  r=subprocess.run(['bash',str(native/'thumbnail.sh'),str(source),str(thumb),'128'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,1,r.stderr);self.assertTrue(thumb.is_file())
+  r=subprocess.run(['bash',str(native/'thumbnail.sh'),str(source),str(thumb),'128'],env=self.env,capture_output=True,text=True);self.assertEqual(r.returncode,0)
+  for i in range(520):(cache/f'{i:032x}.png').write_bytes(b'fixture')
+  self.call('cache-prune');self.assertLessEqual(len(list(cache.rglob('*.png'))),512);self.assertTrue(source.exists())
+ def test_thumbnail_prune_refuses_symlink(self):
+  outside=self.root/'personal';outside.mkdir();(outside/'keep.png').write_bytes(b'personal');cache=self.root/'cache/hyprland-rice';cache.mkdir(parents=True);(cache/'end4').mkdir();(cache/'end4/thumbnails').symlink_to(outside)
+  self.call('cache-prune',ok=False);self.assertEqual((outside/'keep.png').read_bytes(),b'personal')
+ def test_profile_rollback_and_edit_guard(self):
+  cfg=self.root/'config';(cfg/'hypr/UserConfigs').mkdir(parents=True);(cfg/'hypr/hyprland.conf').write_text('# original\n');(cfg/'quickshell').mkdir();(cfg/'quickshell/qml_color.json').write_text(json.dumps(dict(windowBackground='#10151c',primaryText='#eeeeee',secondaryText='#aaaaaa',accentPrimary='#aabbcc')));(cfg/'rofi').mkdir();(cfg/'rofi/.current_wallpaper').write_text('fixture')
+  import ctypes, struct
+  libc=ctypes.CDLL(None,use_errno=True);events_fd=libc.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC);self.assertGreaterEqual(events_fd,0);self.addCleanup(os.close,events_fd)
+  self.assertGreaterEqual(libc.inotify_add_watch(events_fd,os.fsencode(cfg/'hypr'),0x200|0x40|0x80),0)
+  idle=cfg/'hypr/hypridle.conf';idle.write_text('general {\n    lock_cmd = original-lock\n}\n')
+  self.call('profile',str(ROOT),'install','--profile','end4-lite','--no-start');self.assertIn('    lock_cmd = bash \"$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh\"',idle.read_text());p=cfg/'hypr/hyprland.conf';installed=p.read_text();fake=self.root/'broken-checkout';(fake/'vendor/end4-pC').mkdir(parents=True);self.call('profile',str(fake),'install','--profile','end4-lite','--no-start',ok=False);self.assertEqual(p.read_text(),installed);p.write_text(installed+'# user edit\n');self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start',ok=False);self.assertIn('# user edit',p.read_text());p.write_text(installed);self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start');self.assertEqual(p.read_text(),'# original\n');self.assertFalse((cfg/'quickshell/rice-desktop').exists());self.assertEqual(idle.read_text(),'general {\n    lock_cmd = original-lock\n}\n')
+  events=os.read(events_fd,65536);offset=0;replacements=0
+  while offset<len(events):
+   _,mask,_,length=struct.unpack_from('iIII',events,offset);name=events[offset+16:offset+16+length].split(b'\0')[0];offset+=16+length
+   if name==b'hyprland.conf':
+    self.assertFalse(mask & (0x200|0x40),'Watched compositor config disappeared during switching');replacements+=bool(mask & 0x80)
+  self.assertGreaterEqual(replacements,2)
+
+if __name__=='__main__':unittest.main()

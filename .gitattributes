@@ -1,0 +1,2 @@
+# Unified patches intentionally retain upstream context whitespace.
+integration/*.patch -whitespace
