@@ -111,7 +111,7 @@ def run(output):
         trace.write_text('#!/usr/bin/env bash\nif [[ \"${1:-}\" == reload ]]; then ps -p \"$PPID\" -o args= >> \"$RICE_COMMAND_LOG\"; fi\nprintf "%s\\n" "$*" >> "$RICE_COMMAND_LOG"\nexec /usr/bin/hyprctl "$@"\n')
         trace.chmod(0o755)
         deps = Path.home() / '.local/share/hyprland-rice/deps/usr/lib64'
-        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_PYTHON_LOG=str(root / 'python-invocations.log'), RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(runtime / 'native') + ':' + str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
+        env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], RICE_PYTHON_LOG=str(root / 'python-invocations.log'), RICE_COMMAND_LOG=str(root / 'commands.log'), QT_QPA_PLATFORM='wayland', QML_IMPORT_PATH=str(deps / 'qt6/qml'), LD_LIBRARY_PATH=str(deps),
                    XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'),
                    XDG_STATE_HOME=str(root / 'state'), XDG_CACHE_HOME=str(root / 'cache'), RICE_TEST_OUTPUT=output)
         if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':

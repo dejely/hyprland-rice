@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   output=next(m['name'] for m in json.loads(command('hyprctl','monitors','-j')) if m['name'] not in before)
   sp.run(['hyprctl','keyword','monitor',output+',1920x1200@60,auto,1'],check=True,stdout=sp.DEVNULL)
   deps=Path.home()/'.local/share/hyprland-rice/deps/usr/lib64'
-  env=dict(os.environ,QT_QPA_PLATFORM='wayland',QML_IMPORT_PATH=str(runtime/'native')+':'+str(deps/'qt6/qml'),LD_LIBRARY_PATH=str(deps),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_STATE_HOME=str(root/'state'),XDG_CACHE_HOME=str(root/'cache'),RICE_TEST_OUTPUT=output,QSG_RHI_BACKEND=a.backend,QSG_INFO='1',QSG_RENDER_LOOP=a.render_loop,MALLOC_ARENA_MAX='2',MALLOC_TRIM_THRESHOLD_='131072')
+  env=dict(os.environ,QT_QPA_PLATFORM='wayland',QML_IMPORT_PATH=str(deps/'qt6/qml'),LD_LIBRARY_PATH=str(deps),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_STATE_HOME=str(root/'state'),XDG_CACHE_HOME=str(root/'cache'),RICE_TEST_OUTPUT=output,QSG_RHI_BACKEND=a.backend,QSG_INFO='1',QSG_RENDER_LOOP=a.render_loop,MALLOC_ARENA_MAX='2',MALLOC_TRIM_THRESHOLD_='131072')
   
   if a.atlas_size:env.update(QSG_ATLAS_WIDTH=str(a.atlas_size),QSG_ATLAS_HEIGHT=str(a.atlas_size))
   if a.no_depth:env.update(QSG_NO_DEPTH_BUFFER='1',QSG_NO_STENCIL_BUFFER='1')
