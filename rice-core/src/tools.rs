@@ -27,6 +27,27 @@ fn emit(value: Value) -> Result<()> {
     std::io::stdout().flush()?;
     Ok(())
 }
+/// Keep a long-running helper bound to its QML owner, including abrupt exits.
+pub fn parent_exec(a: &[String]) -> Result<()> {
+    let parent: libc::pid_t = a.first().context("owner PID")?.parse()?;
+    if parent <= 1 {
+        bail!("Invalid owner PID");
+    }
+    // Linux preserves PDEATHSIG across this unprivileged exec. Checking the
+    // caller-supplied owner closes the race where it exits before we start.
+    unsafe {
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if libc::getppid() != parent {
+            bail!("Helper owner already exited");
+        }
+    }
+    let error = Command::new(a.get(1).context("helper command")?)
+        .args(&a[2..])
+        .exec();
+    Err(error.into())
+}
 pub fn run_tool(a: &[String]) -> Result<()> {
     let host = PathBuf::from(a.first().context("tool QML path")?);
     let initial = a.get(1).context("tool action")?;

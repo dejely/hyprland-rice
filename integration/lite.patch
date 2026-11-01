@@ -1715,6 +1715,17 @@
 +    // Lite: lyrics fetching is disabled.
  }
 \ No newline at end of file
+--- a/services/Network.qml
++++ b/services/Network.qml
+@@ -170,7 +170,7 @@
+     Process {
+         id: subscriber
+         running: true
+-        command: ["nmcli", "monitor"]
++        command: [Quickshell.shellPath("integration/rice-core"), "parent-exec", String(Quickshell.processId), "nmcli", "monitor"]
+         stdout: SplitParser {
+             onRead: root.update()
+         }
 --- a/services/Notifications.qml
 +++ b/services/Notifications.qml
 @@ -16,6 +16,12 @@

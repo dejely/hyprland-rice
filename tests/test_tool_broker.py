@@ -84,3 +84,35 @@ class ToolBrokerTests(unittest.TestCase):
                 broker.kill()
                 broker.wait()
             broker.stdin.close()
+
+    def test_monitor_dies_when_qml_owner_exits(self):
+        monitor_pid = self.root / 'monitor.pid'
+        self.env['BROKER_TEST_BIN'] = str(BIN)
+        self.env['BROKER_TEST_MONITOR'] = str(monitor_pid)
+        self.fake_qs('"$BROKER_TEST_BIN" parent-exec $$ sleep 30 &\n'
+                     'echo $! > "$BROKER_TEST_MONITOR"\n'
+                     'echo $$ > "$BROKER_TEST_PID"\nexec sleep 30\n')
+        owner = subprocess.Popen([str(self.bin / 'qs')], env=self.env)
+        try:
+            for _ in range(100):
+                if monitor_pid.exists() and monitor_pid.read_text().strip():
+                    pid = monitor_pid.read_text().strip()
+                    comm = Path(f'/proc/{pid}/comm')
+                    if comm.exists() and comm.read_text().strip() == 'sleep':
+                        break
+                time.sleep(.02)
+            else:
+                self.fail('Scoped monitor did not start')
+            owner.kill()
+            owner.wait(timeout=3)
+            for _ in range(100):
+                stat = Path(f'/proc/{pid}/stat')
+                if not stat.exists() or stat.read_text().split()[2] == 'Z':
+                    break
+                time.sleep(.02)
+            else:
+                self.fail('Monitor survived its QML owner')
+        finally:
+            if owner.poll() is None:
+                owner.kill()
+                owner.wait()

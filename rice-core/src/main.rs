@@ -67,6 +67,7 @@ fn dispatch(a: &[String]) -> Result<()> {
         "icons" => extras::icons(a)?,
         "icon-theme" => extras::icon_theme(a)?,
         "tool" => tools::run_tool(a)?,
+        "parent-exec" => tools::parent_exec(a)?,
         "tasks" => println!("{}", storage::tasks(a)?),
         "cache-prune" => storage::prune_thumbnails()?,
         "palette" => storage::palette(
