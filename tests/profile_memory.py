@@ -16,6 +16,10 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
  try:
   if a.profile=='end4': build(runtime)
   else: sp.run([str(ROOT/'rice-core/target/release/rice-core'),'build',str(ROOT),str(runtime),'end4-lite'],check=True,stdout=sp.DEVNULL)
+  # Memory profiling uses IPC, not keyboard input. Keep the rendering graph but
+  # disable the shared compositor grab so normal laptop input cannot dismiss it.
+  focus=runtime/'services/GlobalFocusGrab.qml';focus_source=focus.read_text();grab='active: WM.compositor === "hyprland" && root.dismissable.length > 0';assert grab in focus_source;focus.write_text(focus_source.replace(grab,'active: false // isolated memory benchmark'))
+  report['focus_grabs']=False
   data=json.loads((ROOT/'integration/defaults.json').read_text());data['background']['wallpaperPath']=str((Path.home()/'.config/rofi/.current_wallpaper').resolve());data['wallpaperSelector']={'userPath':str(root/'wallpapers')};(root/'wallpapers').mkdir()
 
   for key in a.omit.split(','):
@@ -55,7 +59,6 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   start=time.monotonic();sample('startup')
   while time.monotonic()-start<a.seconds:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
-  sp.run(['hyprctl','dispatch','focusmonitor',output],check=True,stdout=sp.DEVNULL)
   for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]+([('desktopMenu','open')] if a.profile=='end4-lite' else []):
    for i in range(a.cycles):
     opened_at=time.monotonic();ipc(target,method);time.sleep(.8)
