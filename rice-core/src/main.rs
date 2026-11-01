@@ -6,6 +6,7 @@ use std::{
     process::Command,
 };
 mod extras;
+mod memory;
 mod profile;
 mod runtime;
 mod storage;
@@ -70,6 +71,7 @@ fn dispatch(a: &[String]) -> Result<()> {
         "parent-exec" => tools::parent_exec(a)?,
         "tasks" => println!("{}", storage::tasks(a)?),
         "cache-prune" => storage::prune_thumbnails()?,
+        "cache-reclaim" => println!("{}", memory::reclaim()?),
         "palette" => storage::palette(
             Path::new(a.first().context("source")?),
             Path::new(a.get(1).context("destination")?),
