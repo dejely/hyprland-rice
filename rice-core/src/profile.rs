@@ -10,18 +10,24 @@ fn remove(p: &Path) -> Result<()> {
 }
 fn restore(e: &Value) -> Result<()> {
     let p = Path::new(e["path"].as_str().context("path")?);
-    remove(p)?;
     match e["kind"].as_str() {
-        Some("link") => symlink(e["target"].as_str().context("target")?, p)?,
+        Some("link") => {
+            let temporary = tempfile::tempdir_in(p.parent().context("parent")?)?;
+            let link = temporary.path().join("link");
+            symlink(e["target"].as_str().context("target")?, &link)?;
+            fs::rename(link, p)?;
+        }
         Some("backup") => {
             let b = Path::new(e["backup"].as_str().context("backup")?);
             if b.is_dir() {
+                remove(p)?;
                 runtime::copy_tree(b, p)?;
             } else {
-                fs::copy(b, p)?;
+                storage::atomic(p, &fs::read(b)?)?;
+                fs::set_permissions(p, fs::metadata(b)?.permissions())?;
             }
         }
-        _ => {}
+        _ => remove(p)?,
     }
     Ok(())
 }
@@ -50,9 +56,9 @@ fn change(
     entries.push(e);
     let manifest = state().join("end4-profile.json");
     storage::write_json(&manifest, &json!({"entries":entries}))?;
-    remove(p)?;
     let e = entries.last_mut().unwrap();
     if let Some(t) = target {
+        remove(p)?;
         symlink(t, p)?;
         e["installed_link"] = json!(t);
     } else {
@@ -241,10 +247,12 @@ pub fn switch(a: &[String]) -> Result<()> {
         if p.exists() {
             let re = regex::Regex::new(r"(?m)^(\s*lock_cmd\s*=).*$")?;
             let text = re
-                .replace_all(
-                    &fs::read_to_string(&p)?,
-                    "1 bash \"$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh\"",
-                )
+                .replace_all(&fs::read_to_string(&p)?, |captures: &regex::Captures| {
+                    format!(
+                        "{} bash \"$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh\"",
+                        &captures[1]
+                    )
+                })
                 .into_owned();
             change(&p, Some(&text), None, &backup, &mut entries)?;
         }

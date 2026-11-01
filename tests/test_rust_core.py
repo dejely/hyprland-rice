@@ -50,5 +50,16 @@ class NativeCore(unittest.TestCase):
   self.call('cache-prune',ok=False);self.assertEqual((outside/'keep.png').read_bytes(),b'personal')
  def test_profile_rollback_and_edit_guard(self):
   cfg=self.root/'config';(cfg/'hypr/UserConfigs').mkdir(parents=True);(cfg/'hypr/hyprland.conf').write_text('# original\n');(cfg/'quickshell').mkdir();(cfg/'quickshell/qml_color.json').write_text(json.dumps(dict(windowBackground='#10151c',primaryText='#eeeeee',secondaryText='#aaaaaa',accentPrimary='#aabbcc')));(cfg/'rofi').mkdir();(cfg/'rofi/.current_wallpaper').write_text('fixture')
-  self.call('profile',str(ROOT),'install','--profile','end4-lite','--no-start');p=cfg/'hypr/hyprland.conf';installed=p.read_text();fake=self.root/'broken-checkout';(fake/'vendor/end4-pC').mkdir(parents=True);self.call('profile',str(fake),'install','--profile','end4-lite','--no-start',ok=False);self.assertEqual(p.read_text(),installed);p.write_text(installed+'# user edit\n');self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start',ok=False);self.assertIn('# user edit',p.read_text());p.write_text(installed);self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start');self.assertEqual(p.read_text(),'# original\n');self.assertFalse((cfg/'quickshell/rice-desktop').exists())
+  import ctypes, struct
+  libc=ctypes.CDLL(None,use_errno=True);events_fd=libc.inotify_init1(os.O_NONBLOCK|os.O_CLOEXEC);self.assertGreaterEqual(events_fd,0);self.addCleanup(os.close,events_fd)
+  self.assertGreaterEqual(libc.inotify_add_watch(events_fd,os.fsencode(cfg/'hypr'),0x200|0x40|0x80),0)
+  idle=cfg/'hypr/hypridle.conf';idle.write_text('general {\n    lock_cmd = original-lock\n}\n')
+  self.call('profile',str(ROOT),'install','--profile','end4-lite','--no-start');self.assertIn('    lock_cmd = bash \"$HOME/.config/hypr/UserScripts/rice-desktop/lock.sh\"',idle.read_text());p=cfg/'hypr/hyprland.conf';installed=p.read_text();fake=self.root/'broken-checkout';(fake/'vendor/end4-pC').mkdir(parents=True);self.call('profile',str(fake),'install','--profile','end4-lite','--no-start',ok=False);self.assertEqual(p.read_text(),installed);p.write_text(installed+'# user edit\n');self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start',ok=False);self.assertIn('# user edit',p.read_text());p.write_text(installed);self.call('profile',str(ROOT),'install','--profile','jakoolit','--no-start');self.assertEqual(p.read_text(),'# original\n');self.assertFalse((cfg/'quickshell/rice-desktop').exists());self.assertEqual(idle.read_text(),'general {\n    lock_cmd = original-lock\n}\n')
+  events=os.read(events_fd,65536);offset=0;replacements=0
+  while offset<len(events):
+   _,mask,_,length=struct.unpack_from('iIII',events,offset);name=events[offset+16:offset+16+length].split(b'\0')[0];offset+=16+length
+   if name==b'hyprland.conf':
+    self.assertFalse(mask & (0x200|0x40),'Watched compositor config disappeared during switching');replacements+=bool(mask & 0x80)
+  self.assertGreaterEqual(replacements,2)
+
 if __name__=='__main__':unittest.main()
