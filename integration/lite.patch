@@ -1,10 +1,13 @@
 --- a/RiceBridge.qml
 +++ b/RiceBridge.qml
-@@ -5,28 +5,37 @@
+@@ -5,28 +5,40 @@
  import qs.services
  import qs.modules.common
  Scope {
 +    ToolsBridge { id: tools }
++    Process { id: cacheCleanup; command: [Quickshell.shellPath("integration/rice-core"), "cache-reclaim"] }
++    Timer { id: startupCacheCleanup; interval: 5000; onTriggered: cacheCleanup.running = true }
++
      Process {
          id: paletteWorker
          command: ["python3", Quickshell.shellPath("integration/palette.py"),
@@ -17,7 +20,7 @@
 +        onFileChanged: paletteDebounce.restart()
 +    }
 +    Timer { id: paletteDebounce; interval: 150; onTriggered: { if (!paletteWorker.running) paletteWorker.running = true; else restart(); } }
-+    Component.onCompleted: { paletteDebounce.start();  }
++    Component.onCompleted: { paletteDebounce.start(); startupCacheCleanup.start(); }
 +
  
      IpcHandler {

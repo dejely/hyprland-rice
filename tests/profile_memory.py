@@ -16,6 +16,10 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
  try:
   if a.profile=='end4': build(runtime)
   else: sp.run([str(ROOT/'rice-core/target/release/rice-core'),'build',str(ROOT),str(runtime),'end4-lite'],check=True,stdout=sp.DEVNULL)
+  # Memory profiling uses IPC, not keyboard input. Keep the rendering graph but
+  # disable the shared compositor grab so normal laptop input cannot dismiss it.
+  focus=runtime/'services/GlobalFocusGrab.qml';focus_source=focus.read_text();grab='active: WM.compositor === "hyprland" && root.dismissable.length > 0';assert grab in focus_source;focus.write_text(focus_source.replace(grab,'active: false // isolated memory benchmark'))
+  report['focus_grabs']=False
   data=json.loads((ROOT/'integration/defaults.json').read_text());data['background']['wallpaperPath']=str((Path.home()/'.config/rofi/.current_wallpaper').resolve());data['wallpaperSelector']={'userPath':str(root/'wallpapers')};(root/'wallpapers').mkdir()
 
   for key in a.omit.split(','):
@@ -36,6 +40,10 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
    try: json.loads(ipc('desktop','status'));break
    except (sp.CalledProcessError,ValueError):time.sleep(.1)
   else: raise RuntimeError((root/'shell.log').read_text())
+  def check_budget(row):
+   idle=row['label'] in ('idle','settled') or row['label'].endswith(':closed')
+   if a.profile=='end4-lite' and idle:
+    assert row['service_bytes']+row['swap_bytes']<=250*1024*1024, ('Idle service plus swap exceeds 250 MiB',row['label'],row['service_bytes'],row['swap_bytes'])
   def sample(label):
    props=dict(l.split('=',1) for l in command('systemctl','--user','show',unit,'-p','MemoryCurrent','-p','MemoryPeak','-p','ControlGroup','-p','MemorySwapCurrent','-p','CPUUsageNSec').splitlines())
    cgroup=Path('/sys/fs/cgroup')/props['ControlGroup'].lstrip('/');pids=[int(pid) for f in cgroup.rglob('cgroup.procs') for pid in f.read_text().split()]
@@ -47,19 +55,19 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
      pss+=sm.get('Pss',0);rss+=sm.get('Rss',0);processes.append(dict(name=Path(f'/proc/{pid}/comm').read_text().strip(),pss_kib=sm.get('Pss',0),anon_kib=sm.get('Pss_Anon',0),file_kib=sm.get('Pss_File',0)))
      if Path(f'/proc/{pid}/comm').read_text().strip()=='qs':Path(a.report+'.smaps').write_text(Path(f'/proc/{pid}/smaps').read_text())
     except (OSError,ValueError):pass
-   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes,network_monitors=network_monitors);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);return row
+   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes,network_monitors=network_monitors);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);check_budget(row);return row
   start=time.monotonic();sample('startup')
   while time.monotonic()-start<a.seconds:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
-  sp.run(['hyprctl','dispatch','focusmonitor',output],check=True,stdout=sp.DEVNULL)
   for target,method in [('search','toggle'),('search','workspacesToggle'),('search','clipboardToggle'),('wallpaperSelector','toggle'),('settings','toggle'),('sidebarRight','toggle')]+([('desktopMenu','open')] if a.profile=='end4-lite' else []):
    for i in range(a.cycles):
-    ipc(target,method);time.sleep(.8)
+    opened_at=time.monotonic();ipc(target,method);time.sleep(.8)
     state=json.loads(ipc('desktop','status'));key={'search':'overview','settings':'settings','wallpaperSelector':'wallpaperSelector','sidebarRight':'notifications','desktopMenu':'desktopMenu'}[target]
     for _ in range(50):
      if state[key]:break
      time.sleep(.1);state=json.loads(ipc('desktop','status'))
     assert state[key], (target,'did not stay open',state)
+    report['cycles'].append(dict(target=target,method=method,index=i+1,open_ms=round((time.monotonic()-opened_at)*1000,1)))
     ipc('desktop','closePanels');time.sleep(.4)
     state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications','desktopMenu') if k in state), state
     if (i+1)%5==0:sample(target+':'+method+':'+str(i+1))

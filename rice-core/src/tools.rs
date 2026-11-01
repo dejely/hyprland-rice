@@ -185,6 +185,9 @@ pub fn run_tool(a: &[String]) -> Result<()> {
             emit(json!({"event":"patch","changes":patch}))?;
         }
     }
+    if let Err(error) = memory::reclaim() {
+        eprintln!("Service cache cleanup skipped: {error}");
+    }
     emit(json!({"event":"closed"}))?;
     if failed {
         bail!("Transient UI exited unexpectedly; see tools.log");

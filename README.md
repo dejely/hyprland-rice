@@ -2,7 +2,7 @@
 
 An Arch-styled desktop for an existing JaKooLit Hyprland installation. Choose the lighter end4 profile, the full end4-pC shell, or the original JaKooLit profile with the task cards and compact Waybar. All profiles use the same local tasks and wallpaper colors.
 
-The lite profile is opt-in. Its process memory plus swap settled around 221 MiB in stress testing, but the strict 250 MiB total-service target remains unmet when file cache is included. JaKooLit remains the active laptop profile. See [measurements and rollout status](docs/end4-lite-validation.md).
+The lite profile passed the 250 MiB total idle-service target on the tested laptop: 233–245 MiB across the final panel stress run, including file cache and swap. It is currently active on the laptop. Temporary panels can use more memory while open. See [measurements and rollout status](docs/end4-lite-validation.md).
 
 ## Install and switch
 
