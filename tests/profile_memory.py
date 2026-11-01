@@ -39,14 +39,15 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   def sample(label):
    props=dict(l.split('=',1) for l in command('systemctl','--user','show',unit,'-p','MemoryCurrent','-p','MemoryPeak','-p','ControlGroup','-p','MemorySwapCurrent','-p','CPUUsageNSec').splitlines())
    cgroup=Path('/sys/fs/cgroup')/props['ControlGroup'].lstrip('/');pids=[int(pid) for f in cgroup.rglob('cgroup.procs') for pid in f.read_text().split()]
-   pss=0;rss=0;processes=[]
+   pss=0;rss=0;processes=[];network_monitors=0
    for pid in set(pids):
     try:
+     argv=Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0');network_monitors+=int(len(argv)>1 and Path(os.fsdecode(argv[0])).name=='nmcli' and argv[1]==b'monitor')
      sm=dict((l.split(':',1)[0],int(l.split()[1])) for l in Path(f'/proc/{pid}/smaps_rollup').read_text().splitlines()[1:] if ':' in l)
      pss+=sm.get('Pss',0);rss+=sm.get('Rss',0);processes.append(dict(name=Path(f'/proc/{pid}/comm').read_text().strip(),pss_kib=sm.get('Pss',0),anon_kib=sm.get('Pss_Anon',0),file_kib=sm.get('Pss_File',0)))
      if Path(f'/proc/{pid}/comm').read_text().strip()=='qs':Path(a.report+'.smaps').write_text(Path(f'/proc/{pid}/smaps').read_text())
     except (OSError,ValueError):pass
-   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);return row
+   row=dict(label=label,elapsed=round(time.monotonic()-start,1),pss_kib=pss,rss_kib=rss,service_bytes=int(props['MemoryCurrent']),peak_bytes=int(props['MemoryPeak']),swap_bytes=int(props.get('MemorySwapCurrent','0')),cpu_ns=int(props.get('CPUUsageNSec','0')),memory_stat=dict(line.split() for line in (cgroup/'memory.stat').read_text().splitlines()),processes=processes,network_monitors=network_monitors);report['samples'].append(row);Path(a.report).write_text(json.dumps(report,indent=2));print(json.dumps(row),flush=True);return row
   start=time.monotonic();sample('startup')
   while time.monotonic()-start<a.seconds:
    time.sleep(min(30,max(.1,a.seconds-(time.monotonic()-start))));sample('idle')
@@ -62,7 +63,10 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
     state=json.loads(ipc('desktop','status'));assert not any(state[k] for k in ('overview','settings','wallpaperSelector','notifications')), state
     if (i+1)%5==0:sample(target+':'+method+':'+str(i+1))
    if a.cycles:
-    time.sleep(2.5);sample(target+':'+method+':closed')
+    time.sleep(2.5);closed=sample(target+':'+method+':closed')
+    if a.profile=='end4-lite':
+     assert sum(p['name']=='qs' for p in closed['processes'])==1, 'Transient shell survived closure'
+     assert closed['network_monitors']==1, 'Network subscribers survived closure'
   time.sleep(5);sample('settled')
   sp.run(['hyprctl','dispatch','focusmonitor',output],stdout=sp.DEVNULL);time.sleep(1)
   sp.run(['grim','-o',output,a.report+'.png'],check=True)
