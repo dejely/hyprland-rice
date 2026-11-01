@@ -107,7 +107,8 @@ pub fn palette(source: &Path, dest: &Path) -> Result<()> {
     }
     write_json(dest, &out)
 }
-fn pairs(a: &[String]) -> Result<(Vec<(String, String)>, Vec<String>)> {
+type ConfigEdits = (Vec<(String, String)>, Vec<String>);
+fn pairs(a: &[String]) -> Result<ConfigEdits> {
     let mut pairs = vec![];
     let mut resets = vec![];
     for i in 0..a.len() {
