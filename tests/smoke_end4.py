@@ -49,7 +49,7 @@ HARNESS = '''
                 const item = bgRoot.riceFind(widgetCanvas, "rice-tasks");
                 item.animateXPos=false; item.animateYPos=false; item.x=x; item.y=y; item.commitPosition();
             }
-            function renderStats(): string { return JSON.stringify({shapeSize: centeredWallpaper.centeredShapeRenderSize, centered: centeredWallpaper.centeredWallpaperEnabled}); }
+            function notify(): void { Quickshell.execDetached(["notify-send", "--app-name=rice-fixture", "Fixture notification"]); }\n        function renderStats(): string { return JSON.stringify({shapeSize: centeredWallpaper.centeredShapeRenderSize, centered: centeredWallpaper.centeredWallpaperEnabled}); }
         function centered(enabled: bool): void { Config.options.background.centeredWallpaper = enabled; }
         function resize(width: int, height: int): void {
                 Config.options.background.widgets.todo.width=width;
@@ -71,6 +71,15 @@ def run(output):
         bg = runtime / 'modules/ii/background/Background.qml'
         source = bg.read_text().replace('import QtQuick\n', 'import QtQuick\nimport QtTest\n', 1)
         bg.write_text(source.replace('        id: bgRoot', '        id: bgRoot\n' + HARNESS, 1))
+        if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+            host = runtime / 'tool-host.qml'
+            host.write_text(host.read_text().replace('target: "tool";', '''target: "tool";
+                function testConfig(path: string, value: string): void { Config.setNestedValue(path, JSON.parse(value)); }
+                function testTasks(action: string, payload: string): bool { return Todo.transact(action, payload); }
+                function testTaskState(): string { return JSON.stringify({busy:Todo.busy,tasks:Todo.list.length,undo:!!Todo.deleted,error:Todo.error}); }
+                function testNotifications(): int { return Notifications.list.length; }
+                function testDismissAll(): void { Notifications.discardAllNotifications(); }
+'''))
         overview = runtime / 'modules/ii/overview/Overview.qml'
         source = overview.read_text().replace('target: "search"', 'target: "search"\n        function testQuery(): string { return LauncherSearch.query; }\n        function testReady(): bool { return !!panelWindow; }')
         overview.write_text(source)
@@ -114,7 +123,8 @@ def run(output):
             return subprocess.Popen(['dbus-run-session', 'qs', '-p', str(runtime)], env=env, stdout=logfile, stderr=logfile)
 
         def ipc(target, method, *args):
-            return subprocess.check_output(['qs', 'ipc', '-p', str(runtime), 'call', target, method, *map(str, args)], env=env, text=True, stderr=subprocess.DEVNULL).strip()
+            path = runtime / 'tool-host.qml' if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite' and (target in ('dashboard-test', 'tool') or (target == 'search' and method.startswith('test'))) else runtime
+            return subprocess.check_output(['qs', 'ipc', '-p', str(path), 'call', target, method, *map(str, args)], env=env, text=True, stderr=subprocess.DEVNULL).strip()
 
         def wait(predicate, label):
             for _ in range(100):
@@ -225,6 +235,39 @@ def run(output):
                 time.sleep(1.5)
                 assert int(ipc('dashboard-test', 'cards')) > 0, (method, group, 'Empty settings group')
                 ipc('settings', 'close')
+            if os.environ.get('RICE_SMOKE_PROFILE') == 'end4-lite':
+                ipc('settings', 'open')
+                wait(lambda state: state['settings'], 'open settings for shared-state checks')
+                time.sleep(.3)
+                ipc('test', 'resize', 390, 470)
+                ipc('tool', 'testConfig', 'bar.verbose', 'true')
+                settings_file = root / 'config/hyprland-rice/end4/config.json'
+                wait(lambda _: json.loads(settings_file.read_text())['bar']['verbose'] and json.loads(settings_file.read_text())['background']['widgets']['todo']['width'] == 390, 'concurrent settings fields survive')
+                ipc('test', 'resize', 380, 470)
+                ipc('tool', 'testConfig', 'bar.verbose', 'false')
+                wait(lambda _: not json.loads(settings_file.read_text())['bar']['verbose'], 'reset bar fixture')
+                for _ in range(50):
+                    state = json.loads(ipc('tool', 'testTaskState'))
+                    if not state['busy'] and state['tasks'] == 25: break
+                    time.sleep(.1)
+                assert ipc('tool', 'testTasks', 'delete', json.dumps({'id':last_id})) == 'true'
+                wait(lambda state: state['tasks'] == 24 and state['undo'], 'tool delete updates main task state')
+                assert ipc('desktop', 'task', 'undo', '{}') == 'true'
+                wait(lambda state: state['tasks'] == 25, 'main undo restores tool deletion')
+                ipc('desktop', 'closePanels')
+                time.sleep(.7)
+                ipc('test', 'notify')
+                wait(lambda state: state['notificationCount'] == 1, 'main notification owner')
+                ipc('sidebarRight', 'open')
+                wait(lambda state: state['notifications'], 'notification panel proxy')
+                for _ in range(50):
+                    if ipc('tool', 'testNotifications') == '1': break
+                    time.sleep(.1)
+                else: raise AssertionError('Notification proxy did not receive main data')
+                ipc('tool', 'testDismissAll')
+                wait(lambda state: state['notificationCount'] == 0, 'notification dismissal forwards to owner')
+                ipc('desktop', 'closePanels'); time.sleep(.7)
+                print('PASS tool settings merge, shared task undo and notification ownership', flush=True)
             print('PASS dashboard, targeted color/bar settings, native shortcut help, wallpaper and notifications IPC', flush=True)
             stop()
             process = start()
@@ -246,6 +289,8 @@ def run(output):
         except Exception:
             subprocess.run(['grim', '-o', output, '/tmp/rice-end4-failed.png'], check=False)
             shutil.copy2(root / 'shell.log', '/tmp/rice-end4-failed.log')
+            tool_log = root / 'state/hyprland-rice/end4/tools.log'
+            if tool_log.exists(): shutil.copy2(tool_log, '/tmp/rice-lite-tools-failed.log')
             shutil.copy2(root / 'commands.log', '/tmp/rice-end4-failed-commands.log')
             shutil.copy2(root / 'config/hyprland-rice/end4/config.json', '/tmp/rice-end4-failed-config.json')
             raise
