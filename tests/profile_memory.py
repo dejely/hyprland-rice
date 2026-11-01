@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   if a.profile=='end4': build(runtime)
   else: sp.run([str(ROOT/'rice-core/target/release/rice-core'),'build',str(ROOT),str(runtime),'end4-lite'],check=True,stdout=sp.DEVNULL)
   data=json.loads((ROOT/'integration/defaults.json').read_text());data['background']['wallpaperPath']=str((Path.home()/'.config/rofi/.current_wallpaper').resolve());data['wallpaperSelector']={'userPath':str(root/'wallpapers')};(root/'wallpapers').mkdir()
-  
+
   for key in a.omit.split(','):
    if key in data['background']['widgets']:data['background']['widgets'][key]['enable']=False
   atomic_json(root/'config/hyprland-rice/end4/config.json',data)
@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory(prefix='rice-memory-') as td:
   sp.run(['hyprctl','keyword','monitor',output+',1920x1200@60,auto,1'],check=True,stdout=sp.DEVNULL)
   deps=Path.home()/'.local/share/hyprland-rice/deps/usr/lib64'
   env=dict(os.environ,QT_QPA_PLATFORM='wayland',QML_IMPORT_PATH=str(deps/'qt6/qml'),LD_LIBRARY_PATH=str(deps),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),XDG_STATE_HOME=str(root/'state'),XDG_CACHE_HOME=str(root/'cache'),RICE_TEST_OUTPUT=output,QSG_RHI_BACKEND=a.backend,QSG_INFO='1',QSG_RENDER_LOOP=a.render_loop,MALLOC_ARENA_MAX='2',MALLOC_TRIM_THRESHOLD_='131072')
-  
+
   if a.atlas_size:env.update(QSG_ATLAS_WIDTH=str(a.atlas_size),QSG_ATLAS_HEIGHT=str(a.atlas_size))
   if a.no_depth:env.update(QSG_NO_DEPTH_BUFFER='1',QSG_NO_STENCIL_BUFFER='1')
   sp.run(['systemd-run','--user','--quiet','--unit='+unit,'--property=MemoryAccounting=yes','--property=StandardOutput=append:'+str(root/'shell.log'),'--property=StandardError=append:'+str(root/'shell.log'),'env',*[k+'='+v for k,v in env.items() if k in ('HOME','PATH','WAYLAND_DISPLAY','HYPRLAND_INSTANCE_SIGNATURE','XDG_RUNTIME_DIR','XDG_CURRENT_DESKTOP','QT_QPA_PLATFORM','QML_IMPORT_PATH','LD_LIBRARY_PATH','XDG_CONFIG_HOME','XDG_DATA_HOME','XDG_STATE_HOME','XDG_CACHE_HOME','RICE_TEST_OUTPUT','QSG_ATLAS_WIDTH','QSG_ATLAS_HEIGHT','QSG_RHI_BACKEND','QSG_NO_DEPTH_BUFFER','QSG_NO_STENCIL_BUFFER','QSG_INFO','QSG_RENDER_LOOP','MALLOC_ARENA_MAX','MALLOC_TRIM_THRESHOLD_')],* ([] if a.shared_bus else ['dbus-run-session']),*(['valgrind','--tool=massif','--massif-out-file='+a.report+'.massif','--max-snapshots=30'] if a.massif else []),'qs','-p',str(runtime)],check=True)
