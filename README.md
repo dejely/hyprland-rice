@@ -1,27 +1,33 @@
 # hyprland-rice
 
-An Arch-styled desktop for an existing JaKooLit Hyprland installation. Choose the full end4-pC shell or the original JaKooLit profile with the task cards and compact Waybar. Both use the same local tasks and wallpaper colors.
+An Arch-styled desktop for an existing JaKooLit Hyprland installation. Choose the lighter end4 profile, the full end4-pC shell, or the original JaKooLit profile with the task cards and compact Waybar. All profiles use the same local tasks and wallpaper colors.
+
+The lite profile is opt-in. Its process memory plus swap settled around 221 MiB in stress testing, but the strict 250 MiB total-service target remains unmet when file cache is included. JaKooLit remains the active laptop profile. See [measurements and rollout status](docs/end4-lite-validation.md).
 
 ## Install and switch
 
-Keep this checkout in a permanent location. First inspect dependencies, then install only missing ones:
+Keep this checkout in a permanent location. The native installer requires an existing JaKooLit installation, Rust/Cargo, `patch`, Quickshell, Hyprland, Wallust, ImageMagick. It builds a release binary once; shell startup and installation do not require Python.
 
 ```bash
-/usr/bin/python3 integration/dependencies.py
-/usr/bin/python3 integration/dependencies.py --install-missing
-/usr/bin/python3 scripts/install.py install --profile end4
+./scripts/install.sh install --profile end4-lite
+./scripts/install.sh install --profile jakoolit  # restore the previous desktop
+./scripts/install.sh install --profile end4      # full shell, native helpers
 ```
+
+`--no-start` manages configuration without restarting session processes. `uninstall` restores the previous profile and preserves tasks, wallpapers and personal settings. Backups remain under `~/.local/state/hyprland-rice/backups`. Switching refuses to overwrite managed files changed outside the installer.
+
+The legacy Python installer and dependency inventory remain available for the original overlay and development compatibility. Existing installations can use the native entry point directly.
 
 The dependency helper inventories the installed commands. On Fedora it can extract the missing KDE syntax-highlighting QML package into a user-local directory, without sudo. Other missing commands are reported for installation with the actual host package manager. The tested host is Fedora; Arch branding is presentation. System updates detect the host and use dnf, pacman, or apt-get. Updates require the usual local administrator authentication. Automatic update checks are off initially.
 
-Quickshell, Hyprland, Python 3, systemd user services, Wallust, ImageMagick, cliphist, wl-clipboard, brightnessctl, kitty, libnotify, hyprlock, and hypridle must already be available. The shell also needs the Qt Quick Controls, Effects, Positioning, Multimedia, Qt5Compat, KDE Kirigami and syntax-highlighting QML modules. The pinned shell includes its Material Symbols fonts; other text uses Noto Sans and your Nerd Font.
+Quickshell, Hyprland, systemd user services, Wallust, ImageMagick, cliphist, wl-clipboard, brightnessctl, kitty, libnotify, hyprlock, and hypridle must already be available. The shell also needs the Qt Quick Controls, Effects, Positioning, Multimedia, Qt5Compat, KDE Kirigami and syntax-highlighting QML modules. The pinned shell includes its Material Symbols fonts; other text uses Noto Sans and your Nerd Font. Python 3 is used for development tests and the legacy JaKooLit task overlay, not the native end4 runtime.
 
 The installer builds a runtime copy under `~/.local/state/hyprland-rice/end4-runtimes/` and keeps `rice-desktop` as the Quickshell config and systemd service name. Repeating installation builds a new generation before changing the config symlink. The repository's upstream snapshot is never edited by installation.
 
 Switch back with:
 
 ```bash
-/usr/bin/python3 scripts/install.py install --profile jakoolit
+./scripts/install.sh install --profile jakoolit
 ```
 
 End4 startup disables backed-up executable entries for Waybar, notification daemons, wallpaper daemons, and the separate overview. End4 owns those surfaces. Hypridle stays active, with its lock command backed up and redirected to hyprlock. The existing lock shortcut still sends the session lock request. Native lock actions use the same hyprlock wrapper. Window decorations and animations stay as configured until you explicitly change them.
@@ -40,7 +46,7 @@ Native widget controls handle movement, resizing and visibility. Right-click the
 
 Music follows active MPRIS players and says “No active player” when none is available. Weather starts with a city-setup prompt and GPS disabled. Account-dependent features, online presets, AI and shared weather API defaults are unconfigured. Supply your own settings through the native interface if wanted.
 
-Native wallpaper selection runs JaKooLit's existing Wallust templates so terminal and application palettes still update. `integration/palette.py` maps those colors to the shell's Material roles. Invalid or partially regenerated palettes leave the last valid colors in place. The runtime does not launch swww to render wallpapers. Color settings provide wallpaper selection and regeneration through this pipeline.
+Native wallpaper selection runs JaKooLit's existing Wallust templates so terminal and application palettes still update. The Rust palette adapter maps those colors to the shell's Material roles. Invalid or partially regenerated palettes leave the last valid colors in place. The runtime does not launch swww to render wallpapers. Color settings provide wallpaper selection and regeneration through this pipeline.
 
 Dashboard compositor options write a separate `~/.config/hyprland-rice/end4/hyprland.conf`, sourced only while end4 is selected. Merely loading or searching settings does not apply the upstream compositor defaults. Animation preset actions open the installed JaKooLit menu.
 
@@ -70,9 +76,9 @@ The launcher's `<` search and the JaKooLit cheat sheet both read `hyprctl binds 
 
 ## Tasks and IPC
 
-All native task views use the existing atomic Python backend and `~/.local/share/hyprland-rice/tasks.json`. IDs, completion flags and creation dates are preserved. The desktop card supports adding, editing, completing, deleting and undoing deletion. Blank or unreadable data shows an error and preserves the file. Retry reloads it. Undo lasts until another deletion or a shell restart.
+All native end4 task views use the Rust atomic backend and the existing `~/.local/share/hyprland-rice/tasks.json`. The JaKooLit overlay retains its original Python backend and reads the same compatible store. IDs, completion flags and creation dates are preserved. The desktop card supports adding, editing, completing, deleting and undoing deletion. Blank or unreadable data shows an error and preserves the file. Retry reloads it. Undo lasts until another deletion or a shell restart.
 
-Each mutation locks the store, reads its current contents and atomically replaces the file. Concurrent writers therefore retain each other's saves. The UI reloads on its own operations or explicit refresh; it does not continuously poll external edits.
+Each mutation locks the store, reads its current contents and atomically replaces the file. Concurrent writers therefore retain each other's saves. The lite UI watches file changes and reloads through the backend; it does not continuously poll task data. Tool panels forward mutations to the main shell so deletion undo stays shared.
 
 ```bash
 qs ipc -c rice-desktop call desktop status
@@ -80,17 +86,17 @@ qs ipc -c rice-desktop call desktop refreshTasks
 qs ipc -c rice-desktop call desktop task list '{}'
 ```
 
-`desktop.task(action, payload)` retains `list`, `add`, `edit`, `toggle`, `delete` and `restore`. It returns whether a request started; wait for `desktop.status().busy` to clear and check `error`. Personal tasks, settings, wallpaper files, runtime generations and credentials are outside Git.
+`desktop.task(action, payload)` retains `list`, `add`, `edit`, `toggle`, `delete` and `restore`, and adds `undo` in lite. It returns whether a request started; wait for `desktop.status().busy` to clear and check `error`. Personal tasks, settings, wallpaper files, runtime generations and credentials are outside Git.
 
 ## Backups and removal
 
 Backups and switch manifests live under `~/.local/state/hyprland-rice`. Switching back restores pre-switch files and symlink targets. A conflicting edit to a managed startup or shortcut file stops rollback before restoration; reconcile that file against the backup and manifest, then retry. Your edits are retained. Native end4 settings and compositor overrides persist for the next switch.
 
 ```bash
-/usr/bin/python3 scripts/install.py uninstall
+./scripts/install.sh uninstall
 ```
 
-Uninstall first restores the previous profile, then removes the original overlay if installed. Tasks, wallpapers, native settings, backups and downloaded user-local dependencies remain. `--no-start` manages files without changing session processes.
+Native uninstall restores the JaKooLit profile and retains its task overlay. To also remove the legacy overlay, run `/usr/bin/python3 scripts/install.py uninstall` afterward. Tasks, wallpapers, native settings, backups and downloaded user-local dependencies remain. `--no-start` manages files without changing session processes.
 
 ## Verification
 
@@ -109,3 +115,13 @@ The native smoke test creates a temporary 1920 × 1200 headless output, isolates
 [end4-pC](https://github.com/pctrade/end4-pC), maintained by pctrade and based on end-4's illogical-impulse, is pinned to `91c19a4da710910b2c54a651f27801453cfd8ac0`. Its GPL-3.0 license and credits are preserved under [vendor/end4-pC](vendor/end4-pC/LICENSE). The public shared weather fallback is cleared; all integration patches live outside the snapshot. See [upstream provenance](vendor/UPSTREAM.md).
 
 The base desktop and Wallust pipeline belong to [JaKooLit's Hyprland-Dots](https://github.com/JaKooLit/Hyprland-Dots). Wallpaper credits remain with the original artists in [Wallpaper-Bank](https://github.com/JaKooLit/Wallpaper-Bank). Shell surfaces use [Quickshell](https://quickshell.org/); the rollback bar uses [Waybar](https://github.com/Alexays/Waybar). Changes derived from the vendored shell retain its GPL-3.0 terms.
+
+## Native lite architecture
+
+The lite profile reuses the pinned end4 visuals and seven desktop widgets. Heavy transient windows run in one temporary Quickshell process that exits when the last panel closes. A Rust broker forwards changed settings to the main shell, which remains the only settings writer. Notification actions are forwarded to the main notification server. The hidden legacy settings tree is absent; settings retain the native dashboard. Palette updates follow file notifications instead of launching an interpreter every second. Unused upstream panels and account services are excluded from this profile.
+
+`rice-core` provides short-lived task, palette, configuration, wallpaper, shortcut and installation commands. Task IDs, JSON version 1, atomic replacement, file locks and undo remain compatible with the original backend. Application logic and installation use Rust and shell. Runtime compatibility wrappers retain several upstream `.py` filenames but contain shell commands invoking Rust.
+
+Only profile, calendar, tasks, clock, media, weather and resources are offered in the lite widget menu. The full profile retains the broader upstream catalog. The lite profile uses installed static icon themes; dynamic icon recoloring and lyrics fetching are omitted. Thumbnail generation is serialized, uses ImageMagick resource limits, and retains at most 512 generated thumbnails or 128 MiB in its own cache. The source snapshot in `vendor/` remains unchanged; native builds apply `integration/compat.patch` followed by `integration/lite.patch`.
+
+For profiling and validation commands, see [lite validation](docs/end4-lite-validation.md). The 250 MiB idle target is an acceptance gate, not a claim inferred from the implementation language.
